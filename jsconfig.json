@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es2020",
+        "sourceMap": true,
+        "allowJs": true,
+        "checkJs": true
+    },
+    "exclude": [
+        "node_modules",
+        "**/node_modules*"
+    ]
+}
