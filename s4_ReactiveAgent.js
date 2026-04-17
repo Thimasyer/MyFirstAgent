@@ -6,6 +6,7 @@
  *              Reacts to visible parcels, moves towards them, and picks them up.
  *              Based on s3b structure, with reactive logic from the provided code.
  * @version     1.0.0
+ * 
  */
 
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';

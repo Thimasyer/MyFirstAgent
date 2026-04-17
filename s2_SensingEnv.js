@@ -9,7 +9,6 @@ const URL   = process.env.URL   ?? 'ws://localhost:8080';
 const DEBUG = process.env.DEBUG;
 
 // ─── State ────────────────────────────────────────────────────────────────────
-
 /**
  * Current position of the agent, confirmed by the server.
  * @type {{ x: number, y: number }}
