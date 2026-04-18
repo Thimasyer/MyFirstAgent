@@ -1,3 +1,12 @@
+/**
+ * @file        s3_NoMemory.js
+ * @date        2026-04-15
+ * @description BDI agent - Belief layer WITHOUT memory.
+ *              Tracks only currently visible agents, without retaining any belief about those that are no longer visible.
+ * @note        PAS FORCEMENT UTILE, CODE A VERIFIER ENCORE
+ */
+
+
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
 import 'dotenv/config';
 
@@ -83,10 +92,12 @@ socket.on('map', (x, y, t) => {
 
 // ─── Main loop ────────────────────────────────────────────────────────────────
 
-async function agentLoop() {
-    while (true) {
+async function agentLoop() 
+{
+    while (true) 
+    {
         await tick();
-        await delay(100); // ← indispensable : cède la main à la boucle d'événements
+        await delay(100); // laisse le temps au events de se finir
     }
 }
 

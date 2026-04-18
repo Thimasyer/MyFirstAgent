@@ -1,13 +1,12 @@
 /**
  * @file        s3b_Memory.js
- * @author      [Votre nom]
  * @date        2026-04-15
  * @description BDI agent - Belief layer with memory.
  *              Tracks agent positions over time, computes movement direction,
  *              and evaluates whether agents are within observation range.
- *              Based on s2 structure, enriched with beliefset from s3 proposal.
- * @version     1.0.0
- * @ Todo      Correct the carrying, because it's equal to 0 evan I have a parcel...
+ *              MEMORY: can see several agent, but do not keep in memory if agent is not visible anymore.
+ * 
+ * @Todo        Correct carryingParcels, because is equal to 0 even if I have a parcel...
  */
 
 
@@ -29,7 +28,6 @@ const nbrStart = Date.now();
 const NBR_MAX_BELIEFSET_ENTRIES = 10;
 
 // ─── State ────────────────────────────────────────────────────────────────────
-
 /**
  * Current position of the agent, confirmed by the server.
  * @type {{ x: number, y: number }}
@@ -66,8 +64,8 @@ let carriedParcels = [];
  * Beliefset tracking the history of each sensed agent.
  * Key   : agent id
  * Value : array of log entries (capped at NBR_MAX_BELIEFSET_ENTRIES)
- *         Each entry: { id, name, x, y, score, timestamp, direction }
- * @type {Map<string, Array<{ id: string, name: string, x: number, y: number, score: number, timestamp: number, direction: string }>>}
+ *         Each entry: { id, name, x, y, score, timestamp, visible, direction }
+ * @type {Map<string, Array<{ id: string, name: string, x: number, y: number, score: number, timestamp: number, visible: boolean, direction: string }>>}
  */
 const mapBeliefset = new Map();
 
@@ -158,14 +156,14 @@ socket.onSensing((data) =>
         }
     }
 
-    // ── Remove agents no longer visible (closed-world assumption) ─────────────
+    // ── Update no more visible agents (open-world assumption, limited memory) ─────────────
     const setVisibleIds = new Set((data.agents ?? []).map(a => a.id));
     for (const [strId] of mapBeliefset)
     {
         if (!setVisibleIds.has(strId))
         {
-            mapBeliefset.delete(strId);
-            dbg(`[BELIEF] Agent ${strId} left range, belief removed.`);
+            mapBeliefset.set(strId, { ...mapBeliefset.get(strId), visible: false });
+            dbg(`[BELIEF] Agent ${strId} left range, belief updated.`);
         }
     }
 
@@ -208,7 +206,7 @@ async function agentLoop()
     while (true)
     {
         await tick();
-        await delay(1000);
+        await delay(100);
     }
 }
 
@@ -231,38 +229,6 @@ async function tick()
 function manhattanDist(objA, objB)
 {
     return Math.abs(objA.x - objB.x) + Math.abs(objA.y - objB.y);
-}
-
-/**
- * Returns true if the agent's current tile is a delivery zone (type === 2).
- * @returns {boolean}
- */
-function isOnDeliveryTile()
-{
-    return mapTiles.find(
-        (t) => t.x === myPosition.x && t.y === myPosition.y
-    )?.type == 2;
-}
-
-/**
- * Returns the first visible parcel located on the agent's current tile.
- * @returns {{ id: string, x: number, y: number, reward: number } | undefined}
- */
-function getParcelOnCurrentTile()
-{
-    return visibleParcels.find(
-        (p) => p.x === myPosition.x && p.y === myPosition.y
-    );
-}
-
-/**
- * Returns true if a parcel with the given id is already in carriedParcels.
- * @param {string} strId
- * @returns {boolean}
- */
-function isAlreadyCarried(strId)
-{
-    return carriedParcels.some((p) => p.id === strId);
 }
 
 /**
