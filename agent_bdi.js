@@ -1,14 +1,14 @@
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
-import 'dotenv/config';
+import 'dotenv/config'
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const TOKEN = process.env.TOKEN;
-const URL = 'ws://' + process.env.HOST;
+const HOST = process.env.HOST;
 
 /** Hard-coded map dimensions for probability calculations. */
-const MAP_WIDTH = 24;
-const MAP_HEIGHT = 24;
+let MAP_WIDTH = 0; // Now set on map event
+let MAP_HEIGHT = 0; // Now set on map event
 const MAX_TIME_HORIZON = 5; // Number of moves ahead to predict
 const MAX_AGENTS = 50; // Maximum number of agents to track
 
@@ -22,12 +22,13 @@ class Beliefs {
         /** @type {{ x: number, y: number }} Player's current position. */
         this.playerPosition = { x: 0, y: 0 };
 
-        /** @type {Array<{ id: string }>} Items the player is carrying. */
-        this.carried = [];
+        /** Set (instead a list) of parcels currently carried.  
+         * @type {Set<{ id: string }>} Items the player is carrying. */
+        this.carried = new Set();
 
         /**
          * List of parcels seen on the map.
-         * @type {Array<{ id: string, x: number, y: number }>}
+         * @type {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>}
          */
         this.visibleParcels = [];
 
@@ -49,6 +50,18 @@ class Beliefs {
                 )
             )
         );
+
+        /**
+         * Delivery point location, set on map event.
+         * @type {Array<{ x: number, y: number, distance: number }>}
+         */
+        this.deliveryPoint = []; // Delivery point, will be set on map event
+
+        /**
+         * Tiles of the map, set on map event.
+         * @type {Array<number>}
+         */
+        this.tiles = []; // Map tiles, will be set on map event
     }
 
     /**
@@ -61,19 +74,22 @@ class Beliefs {
     }
 
     /**
-     * Updates the carried items.
-     * @param {Array<{ id: string }>} carried
+     * Adds a parcel to the carried set. (set is used to avoid duplicates)
+     * @param {string} parcelID
      */
-    updateCarried(carried) {
-        this.carried = carried;
+    addCarriedParcel(parcelID) {
+        // add the just picked up new parcel ids to the carried set
+        this.carried.add(parcelID);
     }
 
     /**
      * Updates visible parcels.
-     * @param {Array<{ id: string, x: number, y: number }>} parcels
+     * @param {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>} parcels
      */
     updateVisibleParcels(parcels) {
-        this.visibleParcels = parcels;
+        // visible parcels = not already carried-parcels
+        this.visibleParcels = parcels.filter(p => !p.carriedBy);
+        console.log('VISIBLE PARCELS', this.visibleParcels);
     }
 
     /**
@@ -84,6 +100,7 @@ class Beliefs {
         this.visibleAgents = agents;
     }
 
+    // TODO: find problems, creat error
     /**
      * Updates probability map based on current beliefs.
      * Simplified: for each agent, assume random movement.
@@ -124,6 +141,22 @@ class Beliefs {
             }
         });
     }
+
+    /**
+     * Defines delivery tiles (type = 2) based on map tiles.
+     * @param {Array<{x: number, y: number, type: number}>} tiles
+     */
+    defineDeliveryPoint(tiles)
+    {
+        this.deliveryPoint = tiles
+            .filter(t => t.type == 2)
+            .map(t => ({
+                x: t.x,
+                y: t.y,
+                distance: Math.abs(this.playerPosition.x - t.x) + Math.abs(this.playerPosition.y - t.y)
+            }));
+        console.log(`[MAP] Delivery points found: ${this.deliveryPoint.length}`);
+    }
 }
 
 // ─── Desires ──────────────────────────────────────────────────────────────────
@@ -133,23 +166,53 @@ class Beliefs {
  */
 class Desires {
     constructor(beliefs) {
+        /**
+         * Reference to beliefs, used to generate desires based on current state.
+         * @type {Beliefs}
+         */
         this.beliefs = beliefs;
+
+        /**
+         * Current desires, generated from beliefs. (set is used to avoid duplicates)
+         * @type {Set<string>}
+         */
+        this.setDesires = new Set(); // to avoid duplicates
+        
     }
 
     /**
      * Gets the current desires based on beliefs.
-     * @returns {Array<string>} List of desires.
+     */
+    genOption() { // here we generate options, based on beliefs and intentions (if there are any)
+                                                            // do we have to put a first intention at the begining? (like explore)
+        this.setDesires.clear(); 
+        if (this.beliefs.visibleParcels.length > 0) { // Only desire to pickup if there are parcels not already carried
+            this.setDesires.add('pickup_parcel');
+        }
+        console.log('[CARRIED]', this.beliefs.carried.size);
+        if (this.beliefs.carried.size > 0) {
+            this.setDesires.add('deliver_parcel');
+        }
+        if (this.beliefs.visibleParcels.length === 0 && this.beliefs.carried.size === 0) {
+            this.setDesires.add('explore');
+        }
+    }
+
+    filterDesires() {
+        // TODO: filter the setDesires based on current intentions
+        // (if we have a plan to pickup, we should not desire to explore)
+    
+    }
+
+    /**
+     * Gets the desires set
+     * @returns {Set<string>} Set of desires.
      */
     getDesires() {
-        const desires = [];
-        if (this.beliefs.visibleParcels.length > 0) {
-            desires.push('pickup_parcel');
-        }
-        if (this.beliefs.carried.length > 0) {
-            desires.push('deliver_parcel');
-        }
-        return desires;
+        return this.setDesires;
     }
+
+        
 }
 
 // ─── Intentions ───────────────────────────────────────────────────────────────
@@ -161,6 +224,17 @@ class Intentions {
     constructor() {
         /** @type {Array<string>} Sequence of actions. */
         this.plan = [];
+
+        /**
+         * Current intention
+         */
+        this.currentIntention = null; // could be 'pickup', 'deliver', 'explore', etc
+
+        /**
+         * Last intention, useful for debugging and filtering desires.
+         * @type {Array<string>}
+         */
+        this.lastIntention = []; 
     }
 
     /**
@@ -178,6 +252,14 @@ class Intentions {
     getNextAction() {
         return this.plan.shift() || null;
     }
+
+    /**
+     * Generates a new intention based on desires and beliefs.
+     * 
+     */
+    genIntention() {
+
+    }
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -187,9 +269,13 @@ const desires = new Desires(beliefs);
 const intentions = new Intentions();
 
 // ─── Connection ───────────────────────────────────────────────────────────────
-
-console.log('[INIT] Connecting to server...');
-const socket = DjsConnect(URL, TOKEN);
+const socket = DjsConnect(HOST, TOKEN);
+if (!socket) {
+    console.log('[ERROR] Failed to connect to server.');
+    process.exit(1);
+} else {
+    console.log('[INIT] Connected to server.');
+}
 
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
@@ -198,9 +284,10 @@ const socket = DjsConnect(URL, TOKEN);
  */
 socket.on('you', (me) => {
     beliefs.updatePlayerPosition(me.x, me.y);
-    console.log(`[POSITION] Updated position → x:${me.x}, y:${me.y}`);
+    console.log(`[YOU] Updated position → x:${me.x}, y:${me.y}`);
 });
 
+// TODO: many action in parallel can happen here
 /**
  * Updates visible parcels and agents from sensing data.
  * Then, updates desires and intentions if needed.
@@ -208,33 +295,41 @@ socket.on('you', (me) => {
 socket.onSensing(async (data) => {
     beliefs.updateVisibleParcels(data.parcels ?? []);
     beliefs.updateVisibleAgents(data.agents ?? []);
-    beliefs.updateProbabilityMap();
-    console.log(`[SENSING] ${beliefs.visibleParcels.length} parcel(s), ${beliefs.visibleAgents.length} agent(s) detected.`);
+    //TODO: find solutions, create error...
+    // beliefs.updateProbabilityMap();
 
     // Update desires
-    const currentDesires = desires.getDesires();
-    console.log(`[DESIRES] Current desires: ${currentDesires.join(', ')}`);
+    desires.genOption();
+    console.log(`[DESIRES] Current desires: ${[...desires.setDesires].join(', ')}`);
 
-    // If no current plan, generate one
+    // TODO: put it in planning function after revising the genIntention function
     if (intentions.plan.length === 0) {
-        if (currentDesires.includes('pickup_parcel')) {
-            const nearestParcel = findNearestParcel(beliefs.playerPosition, beliefs.visibleParcels);
-            if (nearestParcel) {
-                const plan = generatePathTo(beliefs.playerPosition, { x: nearestParcel.x, y: nearestParcel.y });
-                plan.push('pickup');
-                intentions.setPlan(plan);
-                console.log(`[PLAN] Moving to parcel at (${nearestParcel.x}, ${nearestParcel.y})`);
-            }
-        } else if (currentDesires.includes('deliver_parcel')) {
-            // For delivery, assume deliver to a fixed point, e.g., (0,0) or something
-            const deliveryPoint = { x: 0, y: 0 }; // Placeholder
+        if (desires.setDesires.has('deliver_parcel')) {
+            //const deliveryPoint = { x: 0, y: 0 }; // Not anymore fixed, now set on map event
+            // search for the closest delivery point
+            const deliveryPoint = findNearestDeliveryPoint(beliefs.playerPosition, beliefs.deliveryPoint);
             const plan = generatePathTo(beliefs.playerPosition, deliveryPoint);
             plan.push('putdown');
             intentions.setPlan(plan);
             console.log(`[PLAN] Delivering to (${deliveryPoint.x}, ${deliveryPoint.y})`);
+        
+        } else if (desires.setDesires.has('pickup_parcel')) {
+            const nearestParcel = findNearestParcel(beliefs.playerPosition, beliefs.visibleParcels);
+            if (nearestParcel) {
+                const plan = generatePathTo(beliefs.playerPosition, { x: nearestParcel.x, y: nearestParcel.y });
+                plan.push('pickup_'+nearestParcel.id); // we can encode the parcel id in the action for later reference
+                intentions.setPlan(plan);
+                console.log(`[PLAN] Moving to parcel ${nearestParcel.id} at (${nearestParcel.x}, ${nearestParcel.y})`);
+            }
+
+        } else if (desires.setDesires.has('explore')) {
+            // Simple exploration: move randomly
+            const directions = ['move_up', 'move_down', 'move_left', 'move_right'];
+            const randomDirection = directions[Math.floor(Math.random() * directions.length)];
+            intentions.setPlan([randomDirection]);
+            console.log(`[PLAN] Exploring: ${randomDirection}`);
         }
     }
-
     // Execute next action if available
     await executeNextAction();
 });
@@ -244,6 +339,12 @@ socket.onSensing(async (data) => {
  */
 socket.on('map', (width, height, tiles) => {
     console.log(`[MAP] Map received: ${width}x${height}`);
+    console.log(`[MAP] Tiles:`, tiles);
+    MAP_HEIGHT = height;
+    MAP_WIDTH = width;
+
+    beliefs.defineDeliveryPoint(tiles);
+    setTimeout(() => {}, 4000);
     // Planning is now handled in sensing events
 });
 
@@ -252,23 +353,41 @@ socket.on('map', (width, height, tiles) => {
 /**
  * Finds the nearest parcel to the given position.
  * @param {{x: number, y: number}} position
- * @param {Array<{x: number, y: number}>} parcels
- * @returns {{x: number, y: number}|null}
+ * @param {Array<{id: string, x: number, y: number, carriedBy: string, reward: number}>} parcels
+ * @returns {{id: string, x: number, y: number}|null}
  */
 function findNearestParcel(position, parcels) {
     if (parcels.length === 0) return null;
     let nearest = parcels[0];
     let minDist = Math.abs(position.x - nearest.x) + Math.abs(position.y - nearest.y);
     for (const parcel of parcels) {
-        const dist = Math.abs(position.x - parcel.x) + Math.abs(position.y - parcel.y);
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = parcel;
+        if (!parcel.carriedBy) { // Only consider parcels not carried by others
+            const dist = Math.abs(position.x - parcel.x) + Math.abs(position.y - parcel.y);
+            if (dist < minDist) {
+                minDist = dist;
+                nearest = parcel;
+            }
         }
     }
     return nearest;
 }
 
+ function findNearestDeliveryPoint(position, deliveryPoints) {
+    if (deliveryPoints.length === 0) return null;
+    let nearest = deliveryPoints[0];
+    let minDist = Math.abs(position.x - nearest.x) + Math.abs(position.y - nearest.y);
+    for (const point of deliveryPoints) {
+        const dist = Math.abs(position.x - point.x) + Math.abs(position.y - point.y);
+        if (dist < minDist) {
+            minDist = dist;
+            nearest = point;
+        }
+    }
+    return nearest;
+}
+
+
+// [TODO] take care about non walkable tiles
 /**
  * Generates a simple path from start to goal (straight line, no obstacles).
  * @param {{x: number, y: number}} start
@@ -320,14 +439,26 @@ async function executeNextAction() {
         } else {
             console.log(`[ACTION] Moved ${direction}.`);
         }
-    } else if (action === 'pickup') {
-        await socket.emitPickup();
-        console.log(`[ACTION] Attempted pickup.`);
-    } else if (action === 'putdown') {
-        await socket.emitPutdown();
-        console.log(`[ACTION] Attempted putdown.`);
-    }
 
+    } else if (action.startsWith('pickup_')) {
+        const parcelId = action.substring('pickup_'.length); 
+        const picked = await socket.emitPickup();
+        for (const p of picked){
+            beliefs.addCarriedParcel(p.id); // only if confirmed by the server
+            desires.setDesires.delete('pickup_parcel'); // after pickup, we should not desire to pickup anymore
+            console.log(`[ACTION] Picked up parcel ${p.id}.`);
+        }
+
+
+    } else if (action === 'putdown') {
+        const putedDown = await socket.emitPutdown();
+        for (const p of putedDown){
+            beliefs.carried.clear(); // we assume we put down all carried parcels
+            desires.setDesires.delete('deliver_parcel'); // after putdown, we should not desire to deliver anymore
+            console.log(`[ACTION] Putdown parcel ${p.id}.`);
+        }
+    }
+    
     // Delay before next action
     await new Promise(resolve => setTimeout(resolve, 500));
 }
