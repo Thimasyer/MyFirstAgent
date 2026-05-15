@@ -294,24 +294,32 @@ class Intentions {
         /** @type {Array<string>} Sequence of actions. */
         this.plan = [];
 
-        /**
-         * Current intention
-         */
-        this.currentIntention = null; // could be 'pickup', 'deliver' etc
 
         /**
-         * Last intention, useful for debugging and filtering desires.
+         * Intention
          * @type {Array<string>}
          */
-        this.lastIntention = []; 
+        this.FilteredItention = []; 
+    }
+
+    /** 
+    *@param {Set<string>} setDesired
+    */
+    fiterIntention(setDesired) {
+        /*à partir des desired qui sont pas trié :
+        - regarder ceux réalisable
+        - les trier d'une manière non indépendante 
+        - met à jour FIlteredIntention
+        - mettre à jour plan, la 1ere intention*/
     }
 
     /**
      * Sets a new plan.
-     * @param {Array<string>} plan
+     * @param {Array<string>} FilteredItention
      */
-    setPlan(plan) {
-        this.plan = plan;
+    setPlan(FilteredItention) {
+        this.plan = FilteredItention[0];
+        /* supprimer la 1ere attention*/
     }
 
     /**
@@ -322,13 +330,6 @@ class Intentions {
         return this.plan.shift() || null;
     }
 
-    /**
-     * Generates a new intention based on desires and beliefs.
-     * 
-     */
-    genIntention() {
-
-    }
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
