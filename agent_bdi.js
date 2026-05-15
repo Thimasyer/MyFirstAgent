@@ -294,12 +294,17 @@ class Intentions {
         /** @type {Array<string>} Sequence of actions. */
         this.plan = [];
 
+        /**
+         * Intention
+         * @type {Array<string>}
+         */
+        this.FilteredIntention = []; 
 
         /**
          * Intention
          * @type {Array<string>}
          */
-        this.FilteredItention = []; 
+        this.Intention = []; 
     }
 
     /** 
@@ -363,8 +368,10 @@ socket.on('you', (me) => {
  * Then, updates desires and intentions if needed.
  */
 socket.onSensing(async (data) => {
+    // --------- Update beliefs ---------
     beliefs.updateVisibleParcels(data.parcels ?? []);
     beliefs.updateVisibleAgents(data.agents ?? []);
+
     //TODO: find solutions becasue it's creating error...
     // beliefs.updateProbabilityMap();
 
@@ -512,6 +519,7 @@ function findNearestSpawnPoint(position, spawnPoints) {
  * @param {{x: number, y: number}} start
  * @param {{x: number, y: number}} goal
  * @returns {Array<string>} List of move actions (move_up, move_down, move_left, move_right)
+ * 
  */
 function generatePathTo(start, goal) {
     const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
@@ -615,6 +623,9 @@ function heuristic(a, b) {
 
 /**
  * Reconstructs the path from cameFrom map
+ * @returns {Array<string>} List of actions to take from start to goal.
+ * @param {Array<Array<{x: number, y: number, action: string}>>} cameFrom
+ * @param {x: number, y: number} current
  */
 function reconstructPath(cameFrom, current) {
     const path = [];
