@@ -245,6 +245,20 @@ class Desires {
     genOption() { // here we generate options, based on beliefs and intentions (if there are any)
                                                             // do we have to put a first intention at the begining? (like explore)
         this.setDesires.clear(); 
+        for (let i = 0; i < this.beliefs.visibleParcels.length; i++) {
+            this?.setDesires.add('pickup_'+this.beliefs.visibleParcels[i].x+'_'+this.beliefs.visibleParcels[i].y); // we can encode the parcel id in the desire for later reference
+        }
+        for (let i = 0; i < this.beliefs.spawnPoint.length; i++) {
+            this?.setDesires.add('explore_'+this.beliefs.spawnPoint[i].x+'_'+this.beliefs.spawnPoint[i].y); // we can encode the spawn point id in the desire for later reference
+        }
+        for (let i = 0; i < this.beliefs.deliveryPoint.length; i++) {
+            this?.setDesires.add('deliver_'+this.beliefs.deliveryPoint[i].x+'_'+this.beliefs.deliveryPoint[i].y); // we can encode the delivery point id in the desire for later reference
+        }
+        
+
+
+
+        /* modfied, we put everything into desired and precise desiered
         if (this.beliefs.visibleParcels.length > 0) { // Only desire to pickup if there are parcels not already carried
             this.setDesires.add('pickup_parcel'); // TODO: precise parcel ID
         }
@@ -256,13 +270,7 @@ class Desires {
             && this.beliefs.deliveryPoint.length > 0
         ) {
             this.setDesires.add('go_to_spawn_point');
-        }
-    }
-
-    filterDesires() {
-        // TODO: filter the setDesires based on current intentions
-        // (if we have a plan to pickup, we should not desire to explore)
-    
+        }*/
     }
 
     /**
@@ -679,7 +687,7 @@ async function executeNextAction() {
         const picked = await socket.emitPickup();
         for (const p of picked){
             beliefs.addCarriedParcel(p.id); // only if confirmed by the server
-            desires.setDesires.delete('pickup_parcel'); // after pickup, we should not desire to pickup anymore
+            desires.setDesires.delete('pickup_'); // after pickup, we should not desire to pickup anymore
             console.log(`[ACTION] Picked up parcel ${p.id}.`);
         }
 
