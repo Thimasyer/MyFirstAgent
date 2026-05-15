@@ -1,0 +1,683 @@
+import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
+import 'dotenv/config'
+
+// ─── Configuration ────────────────────────────────────────────────────────────
+
+const TOKEN = process.env.TOKEN;
+const HOST = process.env.HOST;
+
+/** Hard-coded map dimensions for probability calculations. */
+const MAX_TIME_HORIZON = 5; // Number of moves ahead to predict
+const MAX_AGENTS = 50; // Maximum number of agents to track
+
+// ─── Beliefs Class ────────────────────────────────────────────────────────────
+
+/**
+ * Class representing the agent's beliefs.
+ */
+class Beliefs {
+    constructor() {
+        /** @type {{ x: number, y: number }} Player's current position. */
+        this.playerPosition = { x: 0, y: 0 };
+
+        /** Set (instead a list) of parcels currently carried.  
+         * @type {Set<{ id: string }>} Items the player is carrying. */
+        this.carried = new Set();
+
+        /**
+         * List of parcels seen on the map.
+         * @type {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>}
+         */
+        this.visibleParcels = [];
+
+        /**
+         * List of agents seen on the map.
+         * @type {Array<{ id: string, x: number, y: number }>}
+         */
+        this.visibleAgents = [];
+
+        /**
+         * Probability map: for each position, time step, and agent, probability of being there.
+         * Dimensions: [x][y][time][agentIndex]
+         * @type {Array<Array<Array<Array<number>>>>}
+         */
+        this.probabilityMap = Array.from({ length: this.mapWidth }, () =>
+            Array.from({ length: this.mapHeight }, () =>
+                Array.from({ length: MAX_TIME_HORIZON }, () =>
+                    Array(MAX_AGENTS).fill(0)
+                )
+            )
+        );
+        
+        /**
+         * Delivery point location, set on map event.
+         * @type {Array<{ x: number, y: number, distance: number }>}
+         */
+        this.deliveryPoint = []; // Delivery point, will be set on map event
+
+        /**
+         * Spawn point location, set on map event.
+         * @type {Array<{ x: number, y: number }>}
+         */
+        this.spawnPoint = []; // Spawn point, will be set on map event
+
+        /**
+         * Tiles of the map, set on map event.
+         * @type {Array<number>}
+         */
+        this.tiles = []; // Map tiles, will be set on map event
+
+        /** Map dimensions, set on map event.
+         * @type {number} 
+         */
+        this.mapWidth = 0; 
+
+        /** Map dimensions, set on map event.
+         * @type {number} 
+         */
+        this.mapHeight = 0; 
+        
+    }
+
+
+    /**
+     * Updates the player's position.
+     * @param {number} x
+     * @param {number} y
+     */
+    updatePlayerPosition(x, y) {
+        this.playerPosition = { x, y };
+    }
+
+    /**
+     * Adds a parcel to the carried set. (set is used to avoid duplicates)
+     * @param {string} parcelID
+     */
+    addCarriedParcel(parcelID) {
+        // add the just picked up new parcel ids to the carried set
+        this.carried.add(parcelID);
+    }
+
+    /**
+     * Updates visible parcels.
+     * @param {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>} parcels
+     */
+    updateVisibleParcels(parcels) {
+        // visible parcels = not already carried-parcels
+        this.visibleParcels = parcels.filter(p => !p.carriedBy);
+        console.log('VISIBLE PARCELS', this.visibleParcels);
+    }
+
+    /**
+     * Updates visible agents.
+     * @param {Array<{ id: string, x: number, y: number }>} agents
+     */
+    updateVisibleAgents(agents) {
+        this.visibleAgents = agents;
+    }
+
+    // TODO: find problems, creat error
+    /**
+     * Updates probability map based on current beliefs.
+     * Simplified: for each agent, assume random movement.
+     */
+    updateProbabilityMap() {
+        // Reset map
+        for (let x = 0; x < this.mapWidth; x++) {
+            for (let y = 0; y < this.mapHeight; y++) {
+                for (let t = 0; t < MAX_TIME_HORIZON; t++) {
+                    for (let a = 0; a < Math.min(this.visibleAgents.length, MAX_AGENTS); a++) {
+                        this.probabilityMap[x][y][t][a] = 0;
+                    }
+                }
+            }
+        }
+
+        // For each agent, predict positions
+        this.visibleAgents.slice(0, MAX_AGENTS).forEach((agent, index) => {
+            let currentX = agent.x;
+            let currentY = agent.y;
+            this.probabilityMap[Math.floor(currentX)][Math.floor(currentY)][0][index] = 1; // At time 0, certain
+
+            for (let t = 1; t < MAX_TIME_HORIZON; t++) {
+                // Simple prediction: equal probability to adjacent cells
+                const directions = [
+                    { dx: 0, dy: 1 }, // up
+                    { dx: 0, dy: -1 }, // down
+                    { dx: 1, dy: 0 }, // right
+                    { dx: -1, dy: 0 } // left
+                ];
+                directions.forEach(dir => {
+                    const nx = Math.floor(currentX) + dir.dx;
+                    const ny = Math.floor(currentY) + dir.dy;
+                    if (nx >= 0 && nx < this.mapWidth && ny >= 0 && ny < this.mapHeight) {
+                        this.probabilityMap[nx][ny][t][index] += 0.25; // Equal prob
+                    }
+                });
+            }
+        });
+    }
+
+    /**
+     * Defines delivery tiles (type = 2) based on map tiles.
+     * @param {Array<{x: number, y: number, type: number}>} tiles
+     */
+    defineDeliveryPoint(tiles)
+    {
+        this.deliveryPoint = tiles
+            .filter(t => t.type == 2)
+            .map(t => ({
+                x: t.x,
+                y: t.y,
+                distance: Math.abs(this.playerPosition.x - t.x) + Math.abs(this.playerPosition.y - t.y)
+            }));
+        console.log(`[MAP] Delivery points found: ${this.deliveryPoint.length}`);
+    }
+
+    /**
+     * Defines spawn points (type = 1) based on map tiles.
+     * @param {Array<{x: number, y: number, type: number}>} tiles
+     */
+    defineSpawnPoint(tiles)
+    {
+        this.spawnPoint = tiles
+            .filter(t => t.type == 1)
+            .map(t => ({
+                x: t.x,
+                y: t.y
+            }));
+        console.log(`[MAP] Spawn points found: ${this.spawnPoint.length}`);
+    }
+}
+
+// ─── Desires ──────────────────────────────────────────────────────────────────
+
+/**
+ * Simple desires: pick up nearest parcel, deliver carried parcels.
+ */
+class Desires {
+    constructor(beliefs) {
+        /**
+         * Reference to beliefs, used to generate desires based on current state.
+         * @type {Beliefs}
+         */
+        this.beliefs = beliefs;
+
+        /**
+         * Current desires, generated from beliefs. (set is used to avoid duplicates)
+         * @type {Set<string>}
+         */
+        this.setDesires = new Set(); // to avoid duplicates
+        
+    }
+
+    /**
+     * Generate desires based on beliefs.
+     */
+    genOption() { // here we generate options, based on beliefs and intentions (if there are any)
+                                                            // do we have to put a first intention at the begining? (like explore)
+        this.setDesires.clear(); 
+        if (this.beliefs.visibleParcels.length > 0) { 
+            // Only desire to pickup if there are parcels not already carried
+            for (let p of this.beliefs.visibleParcels) {
+                if (!p.carriedBy) {
+                    // encode parcel id and location in Desires
+                    this.setDesires.add('pickup_parcel_' + p.id +"_at_"+p.x+"_"+p.y); 
+                }
+            }
+        }
+
+        console.log('[CARRIED]', this.beliefs.carried.size);
+        if (this.beliefs.carried.size > 0) {
+            this.setDesires.add('go_deliver_parcel');
+        }
+        if (this.beliefs.visibleParcels.length === 0 && this.beliefs.carried.size === 0
+            && this.beliefs.deliveryPoint.length > 0
+        ) {
+            this.setDesires.add('go_to_spawn_point');
+        }
+    }
+
+
+    filterOption() 
+    {
+        // TODO: filter the setDesires based on current intentions
+    
+    }
+
+    /**
+     * Gets the desires set
+     * @returns {Set<string>} Set of desires.
+     */
+    getDesires() 
+    {
+        return this.setDesires;
+    }
+
+        
+}
+
+// ─── Intentions ───────────────────────────────────────────────────────────────
+
+/**
+ * Current intention: the plan being executed.
+ */
+class Intentions 
+{
+    constructor() 
+    {
+        /** @type {Array<string>} Sequence of actions. */
+        this.plan = [];
+
+        /**
+         * Current intention
+         */
+        this.currentIntention = null; // could be 'pickup', 'deliver' etc
+
+        /**
+         * Last intention, useful for debugging and filtering desires.
+         * @type {Array<string>}
+         */
+        this.lastIntention = []; 
+    }
+
+    /**
+     * Sets a new plan.
+     * @param {Array<string>} plan
+     */
+    setPlan(plan) {
+        this.plan = plan;
+    }
+
+    /**
+     * Gets the next action.
+     * @returns {string|null}
+     */
+    getNextAction() {
+        return this.plan.shift() || null;
+    }
+
+    /**
+     * Generates a new intention based on desires and beliefs.
+     * 
+     */
+    genIntention() {
+
+    }
+}
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+const beliefs = new Beliefs();
+const desires = new Desires(beliefs);
+const intentions = new Intentions();
+
+// ─── Connection ───────────────────────────────────────────────────────────────
+const socket = DjsConnect(HOST, TOKEN);
+if (!socket) {
+    console.log('[ERROR] Failed to connect to server.');
+    process.exit(1);
+} else {
+    console.log('[INIT] Connected to server.');
+}
+
+// ─── Event listeners ──────────────────────────────────────────────────────────
+
+/**
+ * Updates the agent's position in beliefs.
+ */
+socket.on('you', (me) => {
+    beliefs.updatePlayerPosition(me.x, me.y);
+    console.log(`[YOU] Updated position → x:${me.x}, y:${me.y}`);
+});
+
+// TODO: many action in parallel can happen here
+/**
+ * Updates visible parcels and agents from sensing data.
+ * Then, updates desires and intentions if needed.
+ */
+socket.onSensing(async (data) => {
+    beliefs.updateVisibleParcels(data.parcels ?? []);
+    beliefs.updateVisibleAgents(data.agents ?? []);
+    //TODO: find solutions becasue it's creating error...
+    // beliefs.updateProbabilityMap();
+
+    // Update desires
+    desires.genOption();
+    console.log(`[DESIRES] Current desires: ${[...desires.setDesires].join(', ')}`);
+
+    // Her I'm trying to create Intentions based on Desires
+    // When complete, split lines of codes to create filterOption
+    if (intentions.plan.length === 0) {
+
+        if (desires.setDesires.has('go_deliver_parcel')) {
+            // find the nearest delivery point
+            const deliveryPoint = findNearest(beliefs.playerPosition, beliefs.deliveryPoint);
+            // deliveryPoint = null, we are on the delierypoint
+            if (deliveryPoint === null) {
+            // add putdown in front of the existing plan
+            intentions.plan.unshift('putdown');
+            }
+            // deliveryPoint = inf, we can't find a path to the delivery point, give up
+            else if (deliveryPoint === Number.MAX_VALUE) {
+                // No path found, parcel is unreachable, give up
+                console.log('[INTENTION] No valid path to delivery point, unreachable or already on it');
+                intentions.setPlan([]);
+            }
+            else if (deliveryPoint) {
+                const plan = generatePathTo(beliefs.playerPosition, deliveryPoint);
+                // put it in first position of plan
+                plan.push('putdown');
+                intentions.setPlan(plan);
+                console.log(`[PLAN] Delivering to (${deliveryPoint.x}, ${deliveryPoint.y})`);
+            }
+
+            // // search for the closest delivery point using generatePath
+            // const deliveryPoint = findNearestDeliveryPoint(beliefs.playerPosition, beliefs.deliveryPoint);
+            // const plan = generatePathTo(beliefs.playerPosition, deliveryPoint);
+            // plan.push('putdown');
+            // intentions.setPlan(plan);
+            // console.log(`[PLAN] Delivering to (${deliveryPoint.x}, ${deliveryPoint.y})`);
+        } 
+        
+        // search in setDesires if elements begin with 'pickup_parcel_'
+        else if ([...desires.setDesires].some(d => d.startsWith('pickup_parcel_'))) {
+            // extract parcel location
+            const pickupDesire = [...desires.setDesires].find(d => d.startsWith('pickup_parcel_'));
+            const parts = pickupDesire.split('_');
+            const parcelId = parts[2];
+            const parcelX = parseInt(parts[3]);
+            const parcelY = parseInt(parts[4]);
+
+            // CONTINUUUUUE LLAAAAAA!
+            // for each parcel in pickupDesure?
+
+            intentions.setPlan(plan);
+            console.log(`[PLAN] Picking up parcel ${parcelId} at (${best_option.x}, ${best_option.y})`);
+        }
+
+        else if (desires.setDesires.has('go_to_spawn_point')) {
+             
+            // Check if plan is defined ?
+            intentions.setPlan(plan);
+            console.log(`[PLAN] Going to spawn point at (${best_option.x}, ${best_option.y})`);
+        }
+    }
+
+    // Reactive part
+    // for ( let p of beliefs.visibleParcels) {
+    //     if ( ! p.carriedBy ) {
+    //         if      ( beliefs.playerPosition.x == p.x-1 && beliefs.playerPosition.y == p.y )
+    //             await socket.emitMove('right');
+    //         else if ( beliefs.playerPosition.x == p.x+1 && beliefs.playerPosition.y == p.y )
+    //             await socket.emitMove('left')
+    //         else if ( beliefs.playerPosition.y == p.y-1 && beliefs.playerPosition.x == p.x )
+    //             await socket.emitMove('up')
+    //         else if ( beliefs.playerPosition.y == p.y+1 && beliefs.playerPosition.x == p.x )
+    //             await socket.emitMove('down')
+
+    //         if ( beliefs.playerPosition.x == p.x && beliefs.playerPosition.y == p.y ) {
+    //             await socket.emitPickup();
+    //         }
+    //     }
+    // }
+    // Execute next action if available
+    await executeNextAction();
+});
+
+/**
+ * Main logic: triggered once when the map is received.
+ * @param {Array<{x: number, y: number, type: number}>} tiles
+ */
+socket.on('map', (height, width, tiles) => {
+    beliefs.mapWidth = width+1; // error of map dimension
+    beliefs.mapHeight = height+1;
+    beliefs.tiles = tiles; // store tiles in beliefs for later use in pathfinding
+    console.log(`[MAP] Tiles:`, tiles);
+    console.log(`[MAP] Map received: ${beliefs.mapWidth}x${beliefs.mapHeight}`);
+ 
+    beliefs.defineDeliveryPoint(tiles);
+    beliefs.defineSpawnPoint(tiles);
+    setTimeout(() => {}, 1000);
+});
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// findNearest, base on generatePahtTo, adapted for delivery, parcel, span
+/**
+ * @param {{x: number, y: number}} start
+ * @param {Array<{x: number, y: number}>} targets
+ * @returns {{x: number, y: number} | null}
+ * Return null if start = target, inf if no path found.
+ */
+async function findNearest(start, targets) {
+    // Init the nearest with a very high value
+    // if no path found, nearest = inf
+    // If start = target, nearest = null
+    let nearest = Number.MAX_VALUE;
+    let minDistance = Number.MAX_VALUE;
+    for (const target of targets) {
+        if (start.x === target.x && start.y === target.y) {
+            return null; 
+        }
+        // for the list of targets, generate path and keep the little one
+        const path = await generatePathTo(start, target);
+        if (path.length < minDistance) {
+            minDistance = path.length;
+            nearest = target;
+        }
+    }
+    return nearest;
+}
+
+
+/**
+ * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0)
+ * @param {{x: number, y: number}} start
+ * @param {{x: number, y: number}} goal
+ * @returns {Array<string>} List of move actions (move_up, move_down, move_left, move_right)
+ */
+async function generatePathTo(start, goal) {
+    const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
+    const goalPos = { x: Math.round(goal.x), y: Math.round(goal.y) };
+
+    // Create a walkability grid from tiles
+    const walkable = new Array(beliefs.mapWidth);
+    for (let x = 0; x < beliefs.mapWidth; x++) {
+        walkable[x] = new Array(beliefs.mapHeight).fill(true);
+    }
+    
+    // Mark non-walkable tiles (type 0)
+    beliefs.tiles.forEach(tile => {
+        // tile can be "0" (string) instead of 0 (number),
+        // so we use == instead of ===
+        if (tile.type == 0) {
+            walkable[tile.x][tile.y] = false;
+        }
+    });
+
+    // A* algorithm
+    const openSet = new Set();
+    const closedSet = new Set();
+    const gScore = new Array(beliefs.mapWidth).fill(null).map(() => 
+        new Array(beliefs.mapHeight).fill(Infinity));
+    const fScore = new Array(beliefs.mapWidth).fill(null).map(() => 
+        new Array(beliefs.mapHeight).fill(Infinity));
+    const cameFrom = new Array(beliefs.mapWidth).fill(null).map(() => 
+        new Array(beliefs.mapHeight).fill(null));
+
+    gScore[startPos.x][startPos.y] = 0;
+    fScore[startPos.x][startPos.y] = heuristic(startPos, goalPos);
+    openSet.add(`${startPos.x},${startPos.y}`);
+
+    const directions = [
+        { dx: 0, dy: -1, action: 'move_down' },
+        { dx: 0, dy: 1, action: 'move_up' },
+        { dx: -1, dy: 0, action: 'move_left' },
+        { dx: 1, dy: 0, action: 'move_right' }
+    ];
+
+    while (openSet.size > 0) {
+        // Find node with lowest fScore
+        let current = null;
+        let minFScore = Infinity;
+        
+        for (const node of openSet) {
+            const [x, y] = node.split(',').map(Number);
+            if (fScore[x][y] < minFScore) {
+                minFScore = fScore[x][y];
+                current = { x, y };
+            }
+        }
+
+        // take care of the case when current is null 
+        if (!current) {
+            // No path found, parcel is unreachable, give up
+            console.log('[PATHFINDING] No valid path found, unreachable or already on it');
+            return [];
+        } 
+        else if (current.x === goalPos.x && current.y === goalPos.y) {
+            return reconstructPath(cameFrom, current);
+        }
+
+        openSet.delete(`${current.x},${current.y}`);
+        closedSet.add(`${current.x},${current.y}`);
+
+        for (const dir of directions) {
+            const neighbor = { x: current.x + dir.dx, y: current.y + dir.dy };
+            
+            // Check boundaries
+            if (neighbor.x < 0 || neighbor.x >= beliefs.mapWidth || neighbor.y < 0 || neighbor.y >= beliefs.mapHeight) {
+                continue;
+            }
+
+            // Check if walkable
+            if (!walkable[neighbor.x][neighbor.y]) {
+                continue;
+            }
+
+            // Check if already evaluated
+            if (closedSet.has(`${neighbor.x},${neighbor.y}`)) {
+                continue;
+            }
+
+            const tentativeGScore = gScore[current.x][current.y] + 1;
+
+            if (!openSet.has(`${neighbor.x},${neighbor.y}`)) {
+                openSet.add(`${neighbor.x},${neighbor.y}`);
+            } else if (tentativeGScore >= gScore[neighbor.x][neighbor.y]) {
+                continue;
+            }
+
+            cameFrom[neighbor.x][neighbor.y] = { ...current, action: dir.action };
+            gScore[neighbor.x][neighbor.y] = tentativeGScore;
+            fScore[neighbor.x][neighbor.y] = tentativeGScore + heuristic(neighbor, goalPos);
+        }
+    }
+}
+
+/**
+ * Manhattan distance heuristic for A*
+ * @param {{x: number, y: number}} a
+ * @param {{x: number, y: number}} b
+ * @returns {number}
+ */
+function heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+/**
+ * Reconstructs the path from cameFrom map
+ * @returns {Array<string>} List of actions to take from start to goal.
+ * @param {Array<Array<{x: number, y: number, action: string}>>} cameFrom
+ * @param {x: number, y: number} current
+ */
+function reconstructPath(cameFrom, current) {
+    const path = [];
+    while (cameFrom[current.x][current.y] !== null) {
+        const parent = cameFrom[current.x][current.y];
+        if (parent && parent.action) {
+            path.unshift(parent.action);
+        }
+        if (!parent) break; // Stop if no parent
+        current = parent;
+    }
+    return path;
+}
+
+/**
+ * Generates a simple path from start to goal, without considering non-walkable tiles 
+ * (used as fallback if A* fails).
+ * @param {{x: number, y: number}} start
+ * @param {{x: number, y: number}} goal
+ * @returns {Array<string>} List of actions.
+ */
+function generatePathTo_blind(start, goal) {
+    const actions = [];
+    let current = { x: Math.round(start.x), y: Math.round(start.y) };
+    const target = { x: Math.round(goal.x), y: Math.round(goal.y) };
+
+    // Move horizontally
+    while (current.x !== target.x) {
+        if (current.x < target.x) {
+            actions.push('move_right');
+            current.x++;
+        } else {
+            actions.push('move_left');
+            current.x--;
+        }
+    }
+
+    // Move vertically
+    while (current.y !== target.y) {
+        if (current.y < target.y) {
+            actions.push('move_up');
+            current.y++;
+        } else {
+            actions.push('move_down');
+            current.y--;
+        }
+    }
+
+    return actions;
+}
+
+/**
+ * Executes the next action in the intentions plan.
+ */
+async function executeNextAction() {
+    const action = intentions.getNextAction();
+    if (!action) return;
+
+    if (action.startsWith('move_')) {
+        const direction = action.split('_')[1];
+        const moved = await socket.emitMove(direction);
+        if (!moved) {
+            console.log(`[ACTION] Move ${direction} failed.`);
+            intentions.plan = []; // Clear the remaining plan if move fails
+        } else {
+            console.log(`[ACTION] Moved ${direction}.`);
+        }
+
+    } else if (action.startsWith('pickup_')) {
+        const parcelId = action.substring('pickup_'.length); 
+        const picked = await socket.emitPickup();
+        for (const p of picked){
+            beliefs.addCarriedParcel(p.id); // only if confirmed by the server
+            desires.setDesires.delete('pickup_parcel'); // after pickup, we should not desire to pickup anymore
+            console.log(`[ACTION] Picked up parcel ${p.id}.`);
+        }
+
+
+    } else if (action === 'putdown') {
+        const putedDown = await socket.emitPutdown();
+        for (const p of putedDown){
+            beliefs.carried.clear(); // we assume we put down all carried parcels
+            desires.setDesires.delete('go_deliver_parcel'); // after putdown, we should not desire to deliver anymore
+            console.log(`[ACTION] Putdown parcel ${p.id}.`);
+        }
+    }
+    
+    // Delay before next action
+    await new Promise(resolve => setTimeout(resolve, 500));
+}
