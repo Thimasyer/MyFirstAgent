@@ -64,7 +64,7 @@ class Beliefs {
 
         /**
          * Tiles of the map, set on map event.
-         * @type {Array<number>}
+         * @type {Array<{ x: number, y: number, type: number }>}
          */
         this.tiles = []; // Map tiles, will be set on map event
 
@@ -76,7 +76,13 @@ class Beliefs {
         /** Map dimensions, set on map event.
          * @type {number} 
          */
-        this.mapHeight = 0; 
+        this.mapHeight = 0;
+
+        /**
+         * Agent's observation distance (vision range).
+         * @type {number}
+         */
+        this.visionRange = 0;
         
     }
 
@@ -104,9 +110,8 @@ class Beliefs {
      * @param {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>} parcels
      */
     updateVisibleParcels(parcels) {
-        // visible parcels = not already carried-parcels
         this.visibleParcels = parcels.filter(p => !p.carriedBy);
-        console.log('VISIBLE PARCELS', this.visibleParcels);
+        //console.log('VISIBLE PARCELS', this.visibleParcels);
     }
 
     /**
@@ -189,45 +194,20 @@ class Beliefs {
             }));
         console.log(`[MAP] Spawn points found: ${this.spawnPoint.length}`);
     }
-
-    // /**
-    //  * Calculates the actual map width from tiles
-    //  * @param {Array<{x: number, y: number, type: number}> | Object} tiles
-    //  * @returns {number} Maximum x coordinate + 1
-    //  */
-    // getMapWidth(tiles) {
-
-    //     if (!tiles) return 0;
-    //     const tilesArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
-    //     if (tilesArray.length === 0) return 0;
-    //     const maxX = tilesArray.reduce((max, tile) => Math.max(max, tile.x), 0);
-    //     return maxX + 1;
-    // }
-
-    // /**
-    //  * Calculates the actual map height from tiles
-    //  * @param {Array<{x: number, y: number, type: number}> | Object} tiles
-    //  * @returns {number} Maximum y coordinate + 1
-    //  */
-    // getMapHeight(tiles) {
-    //     if (!tiles) return 0;
-    //     const tilesArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
-    //     if (tilesArray.length === 0) return 0;
-    //     const maxY = tilesArray.reduce((max, tile) => Math.max(max, tile.y), 0);
-    //     return maxY + 1;
-    // }
 }
 
 // ─── Desires ──────────────────────────────────────────────────────────────────
-
 /**
  * Simple desires: pick up nearest parcel, deliver carried parcels.
  */
 class Desires {
+    /**
+     * @param {object} beliefs - Reference to beliefs
+     */
     constructor(beliefs) {
         /**
          * Reference to beliefs, used to generate desires based on current state.
-         * @type {Beliefs}
+         * @type {object}
          */
         this.beliefs = beliefs;
 
@@ -254,23 +234,6 @@ class Desires {
         for (let i = 0; i < this.beliefs.deliveryPoint.length; i++) {
             this?.setDesires.add('deliver_'+this.beliefs.deliveryPoint[i].x+'_'+this.beliefs.deliveryPoint[i].y); // we can encode the delivery point id in the desire for later reference
         }
-        
-
-
-
-        /* modfied, we put everything into desired and precise desiered
-        if (this.beliefs.visibleParcels.length > 0) { // Only desire to pickup if there are parcels not already carried
-            this.setDesires.add('pickup_parcel'); // TODO: precise parcel ID
-        }
-        console.log('[CARRIED]', this.beliefs.carried.size);
-        if (this.beliefs.carried.size > 0) {
-            this.setDesires.add('deliver_parcel');
-        }
-        if (this.beliefs.visibleParcels.length === 0 && this.beliefs.carried.size === 0
-            && this.beliefs.deliveryPoint.length > 0
-        ) {
-            this.setDesires.add('go_to_spawn_point');
-        }*/
     }
 
     /**
@@ -285,46 +248,290 @@ class Desires {
 }
 
 // ─── Intentions ───────────────────────────────────────────────────────────────
-
 /**
  * Current intention: the plan being executed.
  */
 class Intentions {
-    constructor() {
+    /**
+     * @param {object} beliefs - Reference to beliefs
+     */
+    constructor(beliefs) {
+        /** @type {object} Reference to beliefs */
+        this.beliefs = beliefs;
+
         /** @type {Array<string>} Sequence of actions. */
         this.plan = [];
 
         /**
-         * Intention
+         * Filtered Intentions: optimal sequence of objectives
          * @type {Array<string>}
          */
-        this.FilteredIntention = []; 
+        this.filteredIntention = []; 
 
         /**
-         * Intention
+         * Intentions: feasible desires (unordered)
          * @type {Array<string>}
          */
-        this.Intention = []; 
-    }
+        this.intention = []; 
 
-    /** 
-    *@param {Set<string>} setDesired
-    */
-    fiterIntention(setDesired) {
-        /*à partir des desired qui sont pas trié :
-        - regarder ceux réalisable
-        - les trier d'une manière non indépendante 
-        - met à jour FIlteredIntention
-        - mettre à jour plan, la 1ere intention*/
+        /**
+         * Current objective being executed
+         * @type {string|null}
+         */
+        this.currentObjective = null;
     }
 
     /**
-     * Sets a new plan.
-     * @param {Array<string>} FilteredItention
+     * Converts desires to intentions by filtering feasible ones.
+     * Only desires that are currently achievable are added to intention.
+     * @param {Set<string>} setDesires - Set of desires (pickup_x_y, deliver_x_y, explore_x_y)
      */
-    setPlan(FilteredItention) {
-        this.plan = FilteredItention[0];
-        /* supprimer la 1ere attention*/
+    desiresToIntention(setDesires) {
+        this.intention = [];
+        
+        for (const desire of setDesires) {
+            if (desire.startsWith('pickup_')) {
+                // Always feasible if we can see the parcel
+                this.intention.push(desire);
+            } else if (desire.startsWith('deliver_')) {
+                // Only feasible if we carry at least one parcel
+                console.log('CARRIED PARCELS', this.beliefs.carried);
+                if (this.beliefs.carried.size > 0) {
+                    this.intention.push(desire);
+                }
+            } else if (desire.startsWith('explore_')) {
+                // Always feasible
+                this.intention.push(desire);
+            }
+        }
+        
+        console.log(`[INTENTION] Converted to intentions: ${this.intention.join(', ')}`);
+    }
+
+    /**
+     * Filters intentions to create an optimal sequence of objectives.
+     * This is the CORE of the game logic.
+     * Strategy: Prioritize pickup -> deliver cycles based on proximity and reward.
+     * 2 Explore Strategy: if no visible spawn tiles, search closest.
+     *                     but if visible spawn tiles, explore the closest outside of vision range.
+     * @param {object} beliefs - Current beliefs about the environment
+     */
+    filterIntention(beliefs) {
+        this.filteredIntention = [];
+        
+        if (this.intention.length === 0) {
+            console.log('[FILTER] No intentions to filter');
+            return;
+        }
+
+        // Separate desires by type
+        const pickups = this.intention.filter(d => d.startsWith('pickup_'));
+        const delivers = this.intention.filter(d => d.startsWith('deliver_'));
+        const explores = this.intention.filter(d => d.startsWith('explore_'));
+
+        // Build objective sequence based on current state and strategy
+        const sequence = [];
+
+        // Strategy: If carrying items, deliver first; otherwise, try to pickup
+        if (beliefs.carried.size > 0 && delivers.length > 0) {
+            // Prioritize delivery of carried parcels
+            // Select closest delivery point
+            const closest = this.findClosestObjective(delivers, beliefs);
+            if (closest) {
+                sequence.push(closest);
+                // Remove from delivers to avoid duplicates
+                delivers.splice(delivers.indexOf(closest), 1);
+            }
+        }
+
+        // After delivering (or if not carrying), pickup a single parcel rather than a long chain
+        if (pickups.length > 0 && beliefs.carried.size === 0) {
+            const closestPickup = this.findClosestObjective(pickups, beliefs);
+            if (closestPickup) {
+                sequence.push(closestPickup);
+            }
+        }
+
+        // If already carrying items, do not plan multiple pickups; deliver first.
+        // If no pickup is selected and no delivery is needed, fallback to exploration.
+        if (sequence.length === 0 && explores.length > 0) {
+            const closest = this.findClosestObjective(explores, beliefs);
+
+            // 
+            if (closest) {
+                // If the closest explore is outside of vision range, go there directly
+                if (this.getObjectiveDistance(closest, beliefs) > beliefs.visionRange) {    
+                    sequence.push(closest);
+                    console.log('[FILTER] Adding closest explore outside vision range:', closest);
+                } else {
+                    // else, search the closest explore tiles outside vision range
+                    // search the closest outside of vision range
+                    const outsideExplores = explores.filter(e => this.getObjectiveDistance(e, beliefs) > beliefs.visionRange);
+                    const closestOutside = this.findClosestObjective(outsideExplores, beliefs);
+                    if (closestOutside) {   
+                        console.log('[FILTER] Adding closest and outsider of vision range explore:', closestOutside);
+                        sequence.push(closestOutside);
+                    } else {
+                        console.log('[FILTER] No explore objectives outside vision range, skipping exploration');
+                    }
+                }
+            }
+        
+        }
+
+        this.filteredIntention = sequence;
+        console.log(`[FILTER] Filtered intention sequence: ${this.filteredIntention.join(' -> ')}`);
+    }
+
+    /**
+     * Finds the closest objective among a list of objectives.
+     * Extracts coordinates from objective string (e.g., "pickup_5_3" -> x=5, y=3)
+     * @param {Array<string>} objectives - List of objectives
+     * @param {Beliefs} beliefs - Current beliefs
+     * @returns {string|null} - Closest objective or null
+     * Note: exclude current position
+     */
+    findClosestObjective(objectives, beliefs) {
+        if (objectives.length === 0) return null;
+
+        let closest = objectives[0];
+        let minDist = this.getObjectiveDistance(objectives[0], beliefs);
+
+        for (const obj of objectives) {
+            const dist = this.getObjectiveDistance(obj, beliefs);
+            if (dist < minDist && dist > 0) { // exclude current position
+                minDist = dist;
+                closest = obj;
+            }
+        }
+        return closest;
+    }
+
+    /**
+     * Groups objectives by proximity to minimize total distance.
+     * @param {Array<string>} objectives - List of objectives
+     * @param {Beliefs} beliefs - Current beliefs
+     * @returns {Array<string>} - Sorted objectives by proximity
+     */
+    groupNearbyObjectives(objectives, beliefs) {
+        const sorted = [...objectives].sort((a, b) => {
+            const distA = this.getObjectiveDistance(a, beliefs);
+            const distB = this.getObjectiveDistance(b, beliefs);
+            return distA - distB;
+        });
+        return sorted;
+    }
+
+    /**
+     * Calculates Manhattan distance to an objective.
+     * @param {string} objective - Objective string (e.g., "pickup_5_3")
+     * @param {Beliefs} beliefs - Current beliefs
+     * @returns {number} - Distance in steps
+     */
+    getObjectiveDistance(objective, beliefs) {
+        const parts = objective.split('_');
+        if (parts.length < 3) return Infinity;
+        
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        const dist = Math.abs(beliefs.playerPosition.x - x) + Math.abs(beliefs.playerPosition.y - y);
+        return dist;
+    }
+
+    /**
+     * Sets the plan from the current objective in filteredIntention.
+     * Generates path to the objective and appends appropriate action.
+     */
+    setPlan() {
+        if (this.filteredIntention.length === 0) {
+            console.log('[PLAN] filteredIntention empty, falling back to first intention');
+            if (this.intention.length > 0) {
+                this.filteredIntention = [...this.intention];
+            }
+        }
+
+        const objective = this.filteredIntention.shift();
+        if (!objective) {
+            console.log('[PLAN] No objectives to plan');
+            this.plan = [];
+            this.currentObjective = null;
+            return;
+        }
+
+        this.currentObjective = objective;
+        
+        // Parse objective
+        const parts = objective.split('_');
+        const type = parts[0];
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        // Generate path to objective location
+        const path = generatePathTo(this.beliefs.playerPosition, { x, y });
+        
+        // Add action at destination
+        if (type === 'pickup') {
+            path.push(objective); // Use full objective string with id for later
+        } else if (type === 'deliver') {
+            path.push('putdown');
+        } else if (type === 'explore') {
+            // No action needed for explore, just reach the location
+        }
+        
+        this.plan = path;
+        console.log(`[PLAN] New plan set for objective "${objective}": ${path.length} actions; filteredIntention remaining ${this.filteredIntention.length}`);
+    }
+
+    /**
+     * Checks if current plan is still valid.
+     * Returns false if the target location is now unreachable or objective is no longer valid.
+     * @returns {boolean}
+     */
+    isPlanValid() {
+        if (this.plan.length === 0) return false;
+        if (!this.currentObjective) return false;
+
+        // Check if objective target is still reachable
+        const parts = this.currentObjective.split('_');
+        const type = parts[0];
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        // For pickup objectives, check if parcel still exists
+        if (type === 'pickup') {
+            const parcelId = parts[3]; // if stored
+            const still_visible = this.beliefs.visibleParcels.some(p => !p.carriedBy && p.x === x && p.y === y);
+            if (!still_visible) {
+                console.log(`[PLAN] Plan invalidated: parcel at (${x}, ${y}) no longer visible`);
+                return false;
+            }
+        }
+
+        // For deliver objectives, check if we still carry items
+        if (type === 'deliver') {
+            if (this.beliefs.carried.size === 0) {
+                console.log(`[PLAN] Plan invalidated: no longer carrying parcels`);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Revises the plan: clears current plan and generates a new one.
+     * @param {Set<string>} desires - Current desires
+     */
+    revisePlan(desires) {
+        console.log('[PLAN] Revising plan...');
+        this.plan = [];
+        this.currentObjective = null;
+        this.filteredIntention = [];
+        this.desiresToIntention(desires);
+        this.filterIntention(this.beliefs);
+        console.log(`[PLAN] Revising filtered intention: ${this.filteredIntention.join(', ')}`);
+        this.setPlan();
     }
 
     /**
@@ -341,7 +548,7 @@ class Intentions {
 
 const beliefs = new Beliefs();
 const desires = new Desires(beliefs);
-const intentions = new Intentions();
+const intentions = new Intentions(beliefs);
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 const socket = DjsConnect(HOST, TOKEN);
@@ -355,171 +562,135 @@ if (!socket) {
 // ─── Event listeners ──────────────────────────────────────────────────────────
 
 /**
+ * Updates the agent's vision range from game config.
+ */
+socket.onConfig((config) => {
+    beliefs.visionRange = config.GAME.player.observation_distance;
+    console.log(`[CONFIG] Vision range: ${beliefs.visionRange}`);
+});
+
+/**
  * Updates the agent's position in beliefs.
  */
 socket.on('you', (me) => {
-    beliefs.updatePlayerPosition(me.x, me.y);
+    beliefs.updatePlayerPosition(me.x ?? 0, me.y ?? 0);
     console.log(`[YOU] Updated position → x:${me.x}, y:${me.y}`);
 });
 
 // TODO: many action in parallel can happen here
 /**
  * Updates visible parcels and agents from sensing data.
- * Then, updates desires and intentions if needed.
+ * Then, uses BDI model: generate desires, convert to intentions, filter to create optimal plan.
  */
 socket.onSensing(async (data) => {
-    // --------- Update beliefs ---------
-    beliefs.updateVisibleParcels(data.parcels ?? []);
-    beliefs.updateVisibleAgents(data.agents ?? []);
+    // Normalize data to handle undefined properties
+    const parcels = (data.parcels ?? []).map(p => ({
+        id: p.id,
+        x: p.x ?? 0,
+        y: p.y ?? 0,
+        carriedBy: p.carriedBy ?? '',
+        reward: p.reward ?? 0
+    }));
+    
+    const agents = (data.agents ?? []).map(a => ({
+        id: a.id,
+        x: a.x ?? 0,
+        y: a.y ?? 0
+    }));
 
+    beliefs.updateVisibleParcels(parcels);
+    beliefs.updateVisibleAgents(agents);
     //TODO: find solutions becasue it's creating error...
     // beliefs.updateProbabilityMap();
 
-    // Update desires
+    // ─── BDI LOOP ────────────────────────────────────────────────────────────
+
+    // Step 1: Generate desires from beliefs
     desires.genOption();
     console.log(`[DESIRES] Current desires: ${[...desires.setDesires].join(', ')}`);
 
-    // TODO: put it in planning function after revising the genIntention function
+    // Step 2: Check if current plan is still valid
+    if (intentions.plan.length > 0 && !intentions.isPlanValid()) {
+        console.log('[BDI] Current plan is no longer valid, revising...');
+        intentions.revisePlan(desires.setDesires);
+    }
+
+    // Step 3: If no plan, create one from BDI deliberation
     if (intentions.plan.length === 0) {
-        if (desires.setDesires.has('deliver_parcel')) {
-            //const deliveryPoint = { x: 0, y: 0 }; // Not anymore fixed, now set on map event
-            // search for the closest delivery point
-            const deliveryPoint = findNearestDeliveryPoint(beliefs.playerPosition, beliefs.deliveryPoint);
-            const plan = generatePathTo(beliefs.playerPosition, deliveryPoint);
-            plan.push('putdown');
-            intentions.setPlan(plan);
-            console.log(`[PLAN] Delivering to (${deliveryPoint.x}, ${deliveryPoint.y})`);
-        
-        } else if (desires.setDesires.has('pickup_parcel')) {
-            const nearestParcel = findNearestParcel(beliefs.playerPosition, beliefs.visibleParcels);
-            if (nearestParcel) {
-                const plan = generatePathTo(beliefs.playerPosition, { x: nearestParcel.x, y: nearestParcel.y });
-                plan.push('pickup_'+nearestParcel.id); // we can encode the parcel id in the action for later reference
-                intentions.setPlan(plan);
-                console.log(`[PLAN] Moving to parcel ${nearestParcel.id} at (${nearestParcel.x}, ${nearestParcel.y})`);
-            }
+        // Convert desires to intentions (filter feasible ones)
+        intentions.desiresToIntention(desires.setDesires);
 
-        } else if (desires.setDesires.has('go_to_spawn_point')) {
-            // Simple path finding
-            const spawnPoint = findNearestSpawnPoint(beliefs.playerPosition, beliefs.spawnPoint);
-            if (spawnPoint) {
-                const plan = generatePathTo(beliefs.playerPosition, spawnPoint);
-                intentions.setPlan(plan);
-                console.log(`[PLAN] Moving to spawn point at (${spawnPoint.x}, ${spawnPoint.y})`);
-                console.log('[PLAN IS]', intentions.plan);
-            }
+        // Filter intentions to create optimal sequence
+        intentions.filterIntention(beliefs);
+
+        // Set plan for first objective
+        if (intentions.filteredIntention.length > 0) {
+            intentions.setPlan();
+        } else {
+            console.log('[BDI] No valid objectives available');
         }
     }
 
-    // Reactive part
-    for ( let p of beliefs.visibleParcels) {
-        if ( ! p.carriedBy ) {
-            if      ( beliefs.playerPosition.x == p.x-1 && beliefs.playerPosition.y == p.y )
+    // ─── EXECUTION ────────────────────────────────────────────────────────────
+    // Reactive part: immediate pickup/delivery if adjacent
+    for (let p of beliefs.visibleParcels) {
+        if (!p.carriedBy) {
+            if (beliefs.playerPosition.x == p.x - 1 && beliefs.playerPosition.y == p.y) {
+                console.log('pickup right')
                 await socket.emitMove('right');
-            else if ( beliefs.playerPosition.x == p.x+1 && beliefs.playerPosition.y == p.y )
+            } else if (beliefs.playerPosition.x == p.x + 1 && beliefs.playerPosition.y == p.y) {
                 await socket.emitMove('left')
-            else if ( beliefs.playerPosition.y == p.y-1 && beliefs.playerPosition.x == p.x )
+                console.log('pickup left')
+            } else if (beliefs.playerPosition.y == p.y - 1 && beliefs.playerPosition.x == p.x) {
                 await socket.emitMove('up')
-            else if ( beliefs.playerPosition.y == p.y+1 && beliefs.playerPosition.x == p.x )
+                console.log('pickup up')
+            } else if (beliefs.playerPosition.y == p.y + 1 && beliefs.playerPosition.x == p.x) {
                 await socket.emitMove('down')
-
-            if ( beliefs.playerPosition.x == p.x && beliefs.playerPosition.y == p.y ) {
+                console.log('pickup down')
+            }
+            if (beliefs.playerPosition.x == p.x && beliefs.playerPosition.y == p.y) {
                 await socket.emitPickup();
+                console.log('pickup')
             }
         }
     }
-    // Execute next action if available
+
+    // Execute next action from plan
     await executeNextAction();
 });
 
 /**
  * Main logic: triggered once when the map is received.
- * @param {Array<{x: number, y: number, type: number}>} tiles
+ * @param {number} height
+ * @param {number} width
+ * @param {Array<{ x: number, y: number, type: string }>} tiles
  */
 socket.on('map', (height, width, tiles) => {
-    beliefs.mapWidth = width+1; // error of map dimension
-    beliefs.mapHeight = height+1;
-    beliefs.tiles = tiles; // store tiles in beliefs for later use in pathfinding
-    console.log(`[MAP] Tiles:`, tiles);
+    beliefs.mapWidth = width + 1; // error of map dimension
+    beliefs.mapHeight = height + 1;
+    
+    // Normalize tiles to have numeric type
+    beliefs.tiles = tiles.map(t => ({
+        x: t.x,
+        y: t.y,
+        type: typeof t.type === 'string' ? parseInt(t.type) : t.type
+    }));
+    
+    console.log(`[MAP] Tiles:`, beliefs.tiles);
     console.log(`[MAP] Map received: ${beliefs.mapWidth}x${beliefs.mapHeight}`);
  
-    beliefs.defineDeliveryPoint(tiles);
-    beliefs.defineSpawnPoint(tiles);
+    beliefs.defineDeliveryPoint(beliefs.tiles);
+    beliefs.defineSpawnPoint(beliefs.tiles);
     setTimeout(() => {}, 1000);
     // Planning is now handled in sensing events
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Finds the nearest parcel to the given position.
- * @param {{x: number, y: number}} position
- * @param {Array<{id: string, x: number, y: number, carriedBy: string, reward: number}>} parcels
- * @returns {{id: string, x: number, y: number}|null}
- */
-function findNearestParcel(position, parcels) {
-    if (parcels.length === 0) return null;
-    let nearest = parcels[0];
-    let minDist = Math.abs(position.x - nearest.x) + Math.abs(position.y - nearest.y);
-    for (const parcel of parcels) {
-        if (!parcel.carriedBy) { // Only consider parcels not carried by others
-            const dist = Math.abs(position.x - parcel.x) + Math.abs(position.y - parcel.y);
-            if (dist < minDist) {
-                minDist = dist;
-                nearest = parcel;
-            }
-        }
-    }
-    return nearest;
-}
-
-/**
- * Finds the nearest delivery point to the given position.
- * @param {{x: number, y: number} position
- * @param {Array<{x: number, y: number, distance: number}>} deliveryPoints
- * @returns {{x: number, y: number}|null}
- */
- function findNearestDeliveryPoint(position, deliveryPoints) {
-    if (deliveryPoints.length === 0) return null;
-    let nearest = deliveryPoints[0];
-    let minDist = Math.abs(position.x - nearest.x) + Math.abs(position.y - nearest.y);
-    for (const point of deliveryPoints) {
-        const dist = Math.abs(position.x - point.x) + Math.abs(position.y - point.y);
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = point;
-        }
-    }
-    return nearest;
-}
-
-/**
- * Finds the nearest spawn point to the given position.
- * @param {{x: number, y: number}} position
- * @param {Array<{x: number, y: number}>} spawnPoints
- * @returns {{x: number, y: number}|null}
- */
-function findNearestSpawnPoint(position, spawnPoints) {
-    if (spawnPoints.length === 0) return null;
-    let nearest = spawnPoints[0];
-    let minDist = Math.abs(position.x - nearest.x) + Math.abs(position.y - nearest.y);
-    for (const point of spawnPoints) {
-        const dist = Math.abs(position.x - point.x) + Math.abs(position.y - point.y);
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = point;
-        }
-    }
-    return nearest;
-}
-
-
 /**
  * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0)
  * @param {{x: number, y: number}} start
  * @param {{x: number, y: number}} goal
  * @returns {Array<string>} List of move actions (move_up, move_down, move_left, move_right)
- * 
  */
 function generatePathTo(start, goal) {
     const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
@@ -569,6 +740,10 @@ function generatePathTo(start, goal) {
             }
         }
 
+        if (!current) {
+            break; // No valid path found
+        }
+
         if (current.x === goalPos.x && current.y === goalPos.y) {
             // Reconstruct path
             return reconstructPath(cameFrom, current);
@@ -616,6 +791,9 @@ function generatePathTo(start, goal) {
 
 /**
  * Manhattan distance heuristic for A*
+ * @param {{x: number, y: number}} a
+ * @param {{x: number, y: number}} b
+ * @returns {number}
  */
 function heuristic(a, b) {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -623,9 +801,9 @@ function heuristic(a, b) {
 
 /**
  * Reconstructs the path from cameFrom map
- * @returns {Array<string>} List of actions to take from start to goal.
- * @param {Array<Array<{x: number, y: number, action: string}>>} cameFrom
- * @param {x: number, y: number} current
+ * @param {Array<Array<{x: number, y: number, action: string}|null>>} cameFrom
+ * @param {{x: number, y: number}} current
+ * @returns {Array<string>}
  */
 function reconstructPath(cameFrom, current) {
     const path = [];
@@ -679,6 +857,8 @@ function generatePathTo_blind(start, goal) {
 
 /**
  * Executes the next action in the intentions plan.
+ * Handles movement, pickup, and putdown actions.
+ * Clears plan on failure to trigger re-planning.
  */
 async function executeNextAction() {
     const action = intentions.getNextAction();
@@ -686,30 +866,55 @@ async function executeNextAction() {
 
     if (action.startsWith('move_')) {
         const direction = action.split('_')[1];
-        const moved = await socket.emitMove(direction);
+        let validDirection = null;
+        
+        if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
+            validDirection = direction;
+        }
+        
+        if (!validDirection) {
+            console.log(`[ACTION] Invalid direction: ${direction}`);
+            intentions.plan = [];
+            intentions.currentObjective = null;
+            return;
+        }
+        
+        const moved = await socket.emitMove(validDirection);
         if (!moved) {
-            console.log(`[ACTION] Move ${direction} failed.`);
-            intentions.plan = []; // Clear the remaining plan if move fails
+            console.log(`[ACTION] Move ${direction} failed - plan blocked, will revise on next sensing.`);
+            intentions.plan = []; // Clear plan to trigger re-planning
+            intentions.currentObjective = null;
         } else {
             console.log(`[ACTION] Moved ${direction}.`);
         }
 
     } else if (action.startsWith('pickup_')) {
-        const parcelId = action.substring('pickup_'.length); 
         const picked = await socket.emitPickup();
-        for (const p of picked){
-            beliefs.addCarriedParcel(p.id); // only if confirmed by the server
-            desires.setDesires.delete('pickup_'); // after pickup, we should not desire to pickup anymore
-            console.log(`[ACTION] Picked up parcel ${p.id}.`);
+        if (picked && picked.length > 0) {
+            for (const p of picked) {
+                beliefs.addCarriedParcel(p.id);
+                console.log(`[ACTION] Picked up parcel ${p.id}.`);
+            }
+            // Remove current objective as it's completed
+            intentions.currentObjective = null;
+        } else {
+            console.log(`[ACTION] Pickup failed - parcel may have been taken by another agent`);
+            intentions.plan = []; // Clear plan to trigger re-planning
+            intentions.currentObjective = null;
         }
-
 
     } else if (action === 'putdown') {
         const putedDown = await socket.emitPutdown();
-        for (const p of putedDown){
-            beliefs.carried.clear(); // we assume we put down all carried parcels
-            desires.setDesires.delete('deliver_parcel'); // after putdown, we should not desire to deliver anymore
-            console.log(`[ACTION] Putdown parcel ${p.id}.`);
+        if (putedDown && putedDown.length > 0) {
+            beliefs.carried.clear();
+            for (const p of putedDown) {
+                console.log(`[ACTION] Putdown parcel ${p.id}.`);
+            }
+            // Remove current objective as it's completed
+            intentions.currentObjective = null;
+        } else {
+            console.log(`[ACTION] Putdown failed - no parcels to deliver`);
+            intentions.plan = []; // Clear plan to trigger re-planning
         }
     }
     
