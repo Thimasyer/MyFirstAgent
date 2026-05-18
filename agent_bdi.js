@@ -102,7 +102,7 @@ class Beliefs {
      */
     addCarriedParcel(parcelID) {
         // add the just picked up new parcel ids to the carried set
-        this.carried.add(parcelID);
+        this.carried.add({ id: parcelID });
     }
 
     /**
@@ -442,7 +442,130 @@ class Intentions {
     /**
      * Sets the plan from the current objective in filteredIntention.
      * Generates path to the objective and appends appropriate action.
+     * Groups objectives by proximity to minimize total distance.
+     * @param {Array<string>} objectives - List of objectives
+     * @param {Beliefs} beliefs - Current beliefs
+     * @returns {Array<string>} - Sorted objectives by proximity
      */
+    groupNearbyObjectives(objectives, beliefs) {
+        const sorted = [...objectives].sort((a, b) => {
+            const distA = this.getObjectiveDistance(a, beliefs);
+            const distB = this.getObjectiveDistance(b, beliefs);
+            return distA - distB;
+        });
+        return sorted;
+    }
+
+    /**
+     * Calculates Manhattan distance to an objective.
+     * @param {string} objective - Objective string (e.g., "pickup_5_3")
+     * @param {Beliefs} beliefs - Current beliefs
+     * @returns {number} - Distance in steps
+     */
+    getObjectiveDistance(objective, beliefs) {
+        const parts = objective.split('_');
+        if (parts.length < 3) return Infinity;
+        
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        const dist = Math.abs(beliefs.playerPosition.x - x) + Math.abs(beliefs.playerPosition.y - y);
+        return dist;
+    }
+
+    /**
+     * Sets the plan from the current objective in filteredIntention.
+     * Generates path to the objective and appends appropriate action.
+     */
+    setPlan() {
+        if (this.filteredIntention.length === 0) {
+            console.log('[PLAN] filteredIntention empty, falling back to first intention');
+            if (this.intention.length > 0) {
+                this.filteredIntention = [...this.intention];
+            }
+        }
+
+        const objective = this.filteredIntention.shift();
+        if (!objective) {
+            console.log('[PLAN] No objectives to plan');
+            this.plan = [];
+            this.currentObjective = null;
+            return;
+        }
+
+        this.currentObjective = objective;
+        
+        // Parse objective
+        const parts = objective.split('_');
+        const type = parts[0];
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        // Generate path to objective location
+        const path = generatePathTo(this.beliefs.playerPosition, { x, y });
+        
+        // Add action at destination
+        if (type === 'pickup') {
+            path.push(objective); // Use full objective string with id for later
+        } else if (type === 'deliver') {
+            path.push('putdown');
+        } else if (type === 'explore') {
+            // No action needed for explore, just reach the location
+        }
+        
+        this.plan = path;
+        console.log(`[PLAN] New plan set for objective "${objective}": ${path.length} actions; filteredIntention remaining ${this.filteredIntention.length}`);
+    }
+
+    /**
+     * Checks if current plan is still valid.
+     * Returns false if the target location is now unreachable or objective is no longer valid.
+     * @returns {boolean}
+     */
+    isPlanValid() {
+        if (this.plan.length === 0) return false;
+        if (!this.currentObjective) return false;
+
+        // Check if objective target is still reachable
+        const parts = this.currentObjective.split('_');
+        const type = parts[0];
+        const x = parseInt(parts[1]);
+        const y = parseInt(parts[2]);
+        
+        // For pickup objectives, check if parcel still exists
+        if (type === 'pickup') {
+            const parcelId = parts[3]; // if stored
+            const still_visible = this.beliefs.visibleParcels.some(p => !p.carriedBy && p.x === x && p.y === y);
+            if (!still_visible) {
+                console.log(`[PLAN] Plan invalidated: parcel at (${x}, ${y}) no longer visible`);
+                return false;
+            }
+        }
+
+        // For deliver objectives, check if we still carry items
+        if (type === 'deliver') {
+            if (this.beliefs.carried.size === 0) {
+                console.log(`[PLAN] Plan invalidated: no longer carrying parcels`);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Revises the plan: clears current plan and generates a new one.
+     * @param {Set<string>} desires - Current desires
+     */
+    revisePlan(desires) {
+        console.log('[PLAN] Revising plan...');
+        this.plan = [];
+        this.currentObjective = null;
+        this.filteredIntention = [];
+        this.desiresToIntention(desires);
+        this.filterIntention(this.beliefs);
+        console.log(`[PLAN] Revising filtered intention: ${this.filteredIntention.join(', ')}`);
+        this.setPlan();
     setPlan() {
         if (this.filteredIntention.length === 0) {
             console.log('[PLAN] filteredIntention empty, falling back to first intention');
@@ -573,7 +696,7 @@ socket.onConfig((config) => {
  * Updates the agent's position in beliefs.
  */
 socket.on('you', (me) => {
-    beliefs.updatePlayerPosition(me.x ?? 0, me.y ?? 0);
+    beliefs.updatePlayerPosition(me.x, me.y);
     console.log(`[YOU] Updated position → x:${me.x}, y:${me.y}`);
 });
 
@@ -600,15 +723,42 @@ socket.onSensing(async (data) => {
 
     beliefs.updateVisibleParcels(parcels);
     beliefs.updateVisibleAgents(agents);
+    // Normalize data to handle undefined properties
+    const parcels = (data.parcels ?? []).map(p => ({
+        id: p.id,
+        x: p.x ?? 0,
+        y: p.y ?? 0,
+        carriedBy: p.carriedBy ?? '',
+        reward: p.reward ?? 0
+    }));
+    
+    const agents = (data.agents ?? []).map(a => ({
+        id: a.id,
+        x: a.x ?? 0,
+        y: a.y ?? 0
+    }));
+
+    beliefs.updateVisibleParcels(parcels);
+    beliefs.updateVisibleAgents(agents);
     //TODO: find solutions becasue it's creating error...
     // beliefs.updateProbabilityMap();
 
     // ─── BDI LOOP ────────────────────────────────────────────────────────────
 
     // Step 1: Generate desires from beliefs
+    // ─── BDI LOOP ────────────────────────────────────────────────────────────
+
+    // Step 1: Generate desires from beliefs
     desires.genOption();
     console.log(`[DESIRES] Current desires: ${[...desires.setDesires].join(', ')}`);
 
+    // Step 2: Check if current plan is still valid
+    if (intentions.plan.length > 0 && !intentions.isPlanValid()) {
+        console.log('[BDI] Current plan is no longer valid, revising...');
+        intentions.revisePlan(desires.setDesires);
+    }
+
+    // Step 3: If no plan, create one from BDI deliberation
     // Step 2: Check if current plan is still valid
     if (intentions.plan.length > 0 && !intentions.isPlanValid()) {
         console.log('[BDI] Current plan is no longer valid, revising...');
@@ -656,11 +806,16 @@ socket.onSensing(async (data) => {
     }
 
     // Execute next action from plan
+
+    // Execute next action from plan
     await executeNextAction();
 });
 
 /**
  * Main logic: triggered once when the map is received.
+ * @param {number} height
+ * @param {number} width
+ * @param {Array<{ x: number, y: number, type: string }>} tiles
  * @param {number} height
  * @param {number} width
  * @param {Array<{ x: number, y: number, type: string }>} tiles
@@ -679,6 +834,8 @@ socket.on('map', (height, width, tiles) => {
     console.log(`[MAP] Tiles:`, beliefs.tiles);
     console.log(`[MAP] Map received: ${beliefs.mapWidth}x${beliefs.mapHeight}`);
  
+    beliefs.defineDeliveryPoint(beliefs.tiles);
+    beliefs.defineSpawnPoint(beliefs.tiles);
     beliefs.defineDeliveryPoint(beliefs.tiles);
     beliefs.defineSpawnPoint(beliefs.tiles);
     setTimeout(() => {}, 1000);
@@ -744,6 +901,10 @@ function generatePathTo(start, goal) {
             break; // No valid path found
         }
 
+        if (!current) {
+            break; // No valid path found
+        }
+
         if (current.x === goalPos.x && current.y === goalPos.y) {
             // Reconstruct path
             return reconstructPath(cameFrom, current);
@@ -791,6 +952,9 @@ function generatePathTo(start, goal) {
 
 /**
  * Manhattan distance heuristic for A*
+ * @param {{x: number, y: number}} a
+ * @param {{x: number, y: number}} b
+ * @returns {number}
  * @param {{x: number, y: number}} a
  * @param {{x: number, y: number}} b
  * @returns {number}
@@ -880,7 +1044,24 @@ async function executeNextAction() {
         }
         
         const moved = await socket.emitMove(validDirection);
+        let validDirection = null;
+        
+        if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
+            validDirection = direction;
+        }
+        
+        if (!validDirection) {
+            console.log(`[ACTION] Invalid direction: ${direction}`);
+            intentions.plan = [];
+            intentions.currentObjective = null;
+            return;
+        }
+        
+        const moved = await socket.emitMove(validDirection);
         if (!moved) {
+            console.log(`[ACTION] Move ${direction} failed - plan blocked, will revise on next sensing.`);
+            intentions.plan = []; // Clear plan to trigger re-planning
+            intentions.currentObjective = null;
             console.log(`[ACTION] Move ${direction} failed - plan blocked, will revise on next sensing.`);
             intentions.plan = []; // Clear plan to trigger re-planning
             intentions.currentObjective = null;
@@ -901,10 +1082,31 @@ async function executeNextAction() {
             console.log(`[ACTION] Pickup failed - parcel may have been taken by another agent`);
             intentions.plan = []; // Clear plan to trigger re-planning
             intentions.currentObjective = null;
+        if (picked && picked.length > 0) {
+            for (const p of picked) {
+                beliefs.addCarriedParcel(p.id);
+                console.log(`[ACTION] Picked up parcel ${p.id}.`);
+            }
+            // Remove current objective as it's completed
+            intentions.currentObjective = null;
+        } else {
+            console.log(`[ACTION] Pickup failed - parcel may have been taken by another agent`);
+            intentions.plan = []; // Clear plan to trigger re-planning
+            intentions.currentObjective = null;
         }
 
     } else if (action === 'putdown') {
         const putedDown = await socket.emitPutdown();
+        if (putedDown && putedDown.length > 0) {
+            beliefs.carried.clear();
+            for (const p of putedDown) {
+                console.log(`[ACTION] Putdown parcel ${p.id}.`);
+            }
+            // Remove current objective as it's completed
+            intentions.currentObjective = null;
+        } else {
+            console.log(`[ACTION] Putdown failed - no parcels to deliver`);
+            intentions.plan = []; // Clear plan to trigger re-planning
         if (putedDown && putedDown.length > 0) {
             beliefs.carried.clear();
             for (const p of putedDown) {
