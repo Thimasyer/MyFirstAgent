@@ -1,3 +1,16 @@
+/*******************************************************************************/
+// File:          agent_bdi.js
+// Description:   Main entry point for the BDI (Belief-Desire-Intention) agent.
+//                Implements the agent's decision-making loop using the BDI model:
+//                - Beliefs: Agent's knowledge/perception about the world (position, parcels, map, etc.)
+//                - Desires: Agent's goals (pickup parcels, deliver, explore)
+//                - Intentions: Agent's selected plans to achieve desires
+// Include:       beliefs.js, desires.js, intentions.js
+// Notes:         The agent connects to a server via WebSocket, receives sensing data,
+//                and executes actions (move, pickup, putdown) based on its BDI reasoning.
+// TODO:          
+/*******************************************************************************/
+
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
 import 'dotenv/config';
 import { Beliefs } from './beliefs.js';
@@ -19,6 +32,8 @@ const myBeliefs = new Beliefs();
 const myDesires = new Desires(myBeliefs);
 const myIntentions = new Intentions(myDesires, myBeliefs, generatePathTo);
 myDesires.setLinkedIntentions(myIntentions); // create circular reference for dynamic updates
+/** @type {boolean} Guard to prevent concurrent action execution */
+let isExecuting = false;
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 const socket = DjsConnect(HOST, TOKEN);
@@ -90,7 +105,7 @@ socket.onSensing(async (data) => {
         myIntentions.filterIntention();
     }
 
-    // Step 3: sound(π, I, B) — replan si plan invalide
+    // Step 3: sound(π, I, B) — replan if plan invalide
     if (myIntentions.getPlan().length === 0 || !myIntentions.isPlanValid())
     {
         console.log('[BDI] Plan invalid or empty, replanning...');
@@ -129,8 +144,20 @@ socket.onSensing(async (data) => {
     //     }
     // }
 
-    // Execute next action from plan
-    await executeNextAction();
+    // onSensing is called every server frame, but executeNext action much time
+    // guard, for preventing doing several action in parallel
+    if (!isExecuting)
+    {  
+        isExecuting = true;
+        try
+        {
+            await executeNextAction();
+        }
+        finally
+        {
+            isExecuting = false;
+        }
+    }
 });
 
 /**
@@ -334,63 +361,78 @@ function generatePathTo_blind(start, goal) {
  * Executes the next action in the intentions plan.
  * Handles movement, pickup, and putdown actions.
  * Clears plan on failure to trigger re-planning.
- */
-async function executeNextAction() {
-    const action = myIntentions.getNextAction();
+ */async function executeNextAction()
+{
+    const action = myIntentions.getPlan()[0];
     if (!action) return;
 
-    if (action.startsWith('move_')) {
+    // ── MOVE ──────────────────────────────────────────────────
+    if (action.startsWith('move_'))
+    {
         const direction = action.split('_')[1];
-        let validDirection = null;
 
-        if (direction === 'up' || direction === 'down' || direction === 'left' || direction === 'right') {
-            validDirection = direction;
-        }
-
-        if (!validDirection) {
+        if (!['up','down','left','right'].includes(direction))
+        {
             console.log(`[ACTION] Invalid direction: ${direction}`);
             myIntentions.clearPlan();
             return;
         }
 
-        const moved = await socket.emitMove(validDirection);
-        if (!moved) {
-            console.log(`[ACTION] Move ${direction} failed, will retry.`);
-            // Le plan reste intact, isPlanValid() le réévaluera
-            // si l'objectif devient vraiment inaccessible
-        } else {
-            console.log(`[ACTION] Moved ${direction}.`);
-        }
+        const moved = await socket.emitMove(direction);
 
-    } else if (action.startsWith('pickup_')) {
+        if (moved)
+        {
+            console.log(`[ACTION] Moved ${direction}.`);
+            myIntentions.getNextAction(); // shift only on success
+        }
+        else
+        {
+            console.log(`[ACTION] Move ${direction} failed, will retry.`);
+            // plan intact: isPlanValid() décidera si on replanne
+        }
+    }
+
+    // ── PICKUP ────────────────────────────────────────────────
+    else if (action.startsWith('pickup_'))
+    {
         const picked = await socket.emitPickup();
-        if (picked && picked.length > 0) {
-            for (const p of picked) {
+
+        if (picked && picked.length > 0)
+        {
+            for (const p of picked)
+            {
                 myBeliefs.addCarriedParcel(p.id);
                 console.log(`[ACTION] Picked up parcel ${p.id}.`);
             }
-            // Remove current objective as it's completed
-            myIntentions.clearPlan();
-        } else {
-            console.log(`[ACTION] Pickup failed - parcel may have been taken by another agent`);
-            myIntentions.clearPlan();
+            myIntentions.getNextAction(); // shift the pickup action
+            myIntentions.clearPlan();     // objective completed
         }
-
-    } else if (action === 'putdown') {
-        const putedDown = await socket.emitPutdown();
-        if (putedDown && putedDown.length > 0) {
-            myBeliefs.getCarriedParcels().clear();
-            for (const p of putedDown) {
-                console.log(`[ACTION] Putdown parcel ${p.id}.`);
-            }
-            // Remove current objective as it's completed
-            myIntentions.clearPlan();
-        } else {
-            console.log(`[ACTION] Putdown failed - no parcels to deliver`);
+        else
+        {
+            console.log(`[ACTION] Pickup failed.`);
             myIntentions.clearPlan();
         }
     }
 
-    // Delay before next action
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // ── PUTDOWN ───────────────────────────────────────────────
+    else if (action === 'putdown')
+    {
+        const putDown = await socket.emitPutdown();
+
+        if (putDown && putDown.length > 0)
+        {
+            myBeliefs.getCarriedParcels().clear();
+            for (const p of putDown)
+            {
+                console.log(`[ACTION] Put down parcel ${p.id}.`);
+            }
+            myIntentions.getNextAction(); // shift the putdown action
+            myIntentions.clearPlan();     // objective completed
+        }
+        else
+        {
+            console.log(`[ACTION] Putdown failed.`);
+            myIntentions.clearPlan();
+        }
+    }
 }

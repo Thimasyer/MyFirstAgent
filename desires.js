@@ -1,6 +1,15 @@
-/**
- * Class representing the agent's desires.
- */
+/*******************************************************************************/
+// File:          desires.js
+// Description:   Represents the agent's goals and motivations.
+//                Generates desires based on current beliefs:
+//                - pickup_X_Y: Desire to pick up a parcel at (X, Y)
+//                - deliver_X_Y: Desire to deliver parcels at a delivery point (X, Y)
+//                - explore_X_Y: Desire to explore spawn points (X, Y)
+// Include:       beliefs.js
+// Notes:         Desires are dynamically generated from the agent's perceptions and
+//                serve as input for the intention formation process.
+// TODO:          
+/*******************************************************************************/
 import { Beliefs } from './beliefs.js';
 
 export class Desires {

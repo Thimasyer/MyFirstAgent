@@ -1,6 +1,16 @@
-/**
- * Class representing the agent's beliefs.
- */
+/*******************************************************************************/
+// File:          beliefs.js
+// Description:   Represents the agent's knowledge and perceptions about the world.
+//                Stores and manages:
+//                - Player position and state (carried parcels)
+//                - Visible parcels and agents
+//                - Map information (tiles, delivery points, spawn points)
+//                - Probability maps for predicting agent movements
+// Include:       
+// Notes:         Beliefs are updated through sensing data from the server and serve
+//                as the foundation for the BDI model's decision-making process.
+// TODO:          
+/*******************************************************************************/
 export class Beliefs {
     /** @type {{ x: number, y: number }} */
     #playerPosition = { x: 0, y: 0 };

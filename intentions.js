@@ -1,6 +1,16 @@
-/**
- * Class representing the agent's intentions.
- */
+/*******************************************************************************/
+// File:          intentions.js
+// Description:   Represents the agent's committed plans to achieve its desires.
+//                Implements the BDI model's intention component with:
+//                - Plan generation from desires
+//                - Plan filtering and prioritization
+//                - Plan validation and reconsideration
+//                - Execution of actions (move, pickup, putdown)
+// Include:       desires.js, beliefs.js
+// Notes:         Intentions bridge the gap between desires (what the agent wants)
+//                and actions (what the agent actually does).
+// TODO:          
+/*******************************************************************************/
 export class Intentions {
     /** @type {Array<string>} */
     #plan = [];
@@ -275,9 +285,9 @@ export class Intentions {
         }
         if (type === 'explore')
         {
-            return true; // explore toujours valide sauf si reconsider() l'invalide
+            // explore, plan valide si l'agent ne porte aucun parcel
+            return this.#beliefs.getCarriedParcels().size === 0; 
         }
-
         return false;
     }
 
