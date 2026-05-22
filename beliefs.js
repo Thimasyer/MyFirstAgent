@@ -185,7 +185,7 @@ export class Beliefs {
      * Updates visible parcels.
      * @param {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>} parcels
      */
-    updateVisibleParcels(parcels) {
+    setVisibleParcels(parcels) {
         this.#visibleParcels = parcels.filter(p => !p.carriedBy);
     }
 
@@ -193,7 +193,7 @@ export class Beliefs {
      * Updates visible agents.
      * @param {Array<{ id: string, x: number, y: number }>} agents
      */
-    updateVisibleAgents(agents) {
+    setVisibleAgents(agents) {
         this.#visibleAgents = agents;
     }
 
@@ -211,18 +211,22 @@ export class Beliefs {
      */
     updatePercepts(parcels, agents) {
         // ── Parcels delta ──────────────────────────────────────────
+        // actual visible parcels
         const currentParcelIds = new Set(
             parcels.filter(p => !p.carriedBy).map(p => p.id)
         );
 
+        // Parcel that was on the last onSensing not visible
         const newParcels = parcels.filter(
             p => !p.carriedBy && !this.#knownParcelIds.has(p.id)
         );
 
+        // Parcel that disappear from the last onSensing
         const goneParcelIds = [...this.#knownParcelIds].filter(
             id => !currentParcelIds.has(id)
         );
 
+        // Store actual visible parcel for next time
         this.#knownParcelIds = currentParcelIds;
 
         // ── Agents delta ───────────────────────────────────────────
@@ -238,15 +242,15 @@ export class Beliefs {
 
         this.#knownAgentIds = currentAgentIds;
 
-        // ── Update carried parcels (colis portés par cet agent) ────────
+        // ── Update carried parcels, server given
         if (this.#myAgentId) {
             const carriedByMe = parcels.filter(p => p.carriedBy === this.#myAgentId);
             this.#carriedParcel = new Set(carriedByMe.map(p => ({ id: p.id })));
         }
 
         // ── Update beliefs ─────────────────────────────────────────
-        this.updateVisibleParcels(parcels);
-        this.updateVisibleAgents(agents);
+        this.setVisibleParcels(parcels);
+        this.setVisibleAgents(agents);
 
         return { newParcels, goneParcelIds, newAgents, goneAgentIds };
     }
@@ -362,7 +366,7 @@ export class Beliefs {
      * Sets the agent's ID for tracking carried parcels.
      * @param {string} agentId
      */
-    setAgentId(agentId) {
+    setMyId(agentId) {
         this.#myAgentId = agentId;
     }
 

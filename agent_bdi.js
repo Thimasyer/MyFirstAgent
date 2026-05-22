@@ -6,9 +6,16 @@
 //                - Desires: Agent's goals (pickup parcels, deliver, explore)
 //                - Intentions: Agent's selected plans to achieve desires
 // Include:       beliefs.js, desires.js, intentions.js
-// Notes:         The agent connects to a server via WebSocket, receives sensing data,
-//                and executes actions (move, pickup, putdown) based on its BDI reasoning.
-// TODO:          
+// Structure:    1. Beliefs are set in the events. 2. Percept are update with onSening event.
+//               3. Call of bdi_loop: 
+//                  - desires generation
+//                  - filter and sort to get intention
+//                  - plan  (execute is in parallel)
+
+//                                  
+//               
+// TODO:         Where do we have to updateProbabilityMap()? 
+//                  not in onSensing, take to long
 /*******************************************************************************/
 
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
@@ -17,7 +24,7 @@ import { Beliefs } from './beliefs.js';
 import { Desires } from './desires.js';
 import { Intentions } from './intentions.js';
 
-// ─── Configuration ────────────────────────────────────────────────────────────
+// ─── Configuration ──────────────────────────────────────────────────────────
 
 const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
@@ -44,7 +51,9 @@ if (!socket) {
     console.log('[INIT] Connected to server.');
 }
 
-// ─── Event listeners ────────────────────────────────────────────────────────
+// ****************************************************************************
+// Event listeners 
+// ****************************************************************************
 
 /**
  * Updates the agent's vision range from game config.
@@ -60,7 +69,7 @@ socket.onConfig((config) => {
 socket.on('you', (me) => {
     myBeliefs.updatePlayerPosition(me.x ?? 0, me.y ?? 0);
     if (me.id) {
-        myBeliefs.setAgentId(me.id);
+        myBeliefs.setMyId(me.id);
     }
     console.log(`[YOU] Updated position → x:${me.x}, y:${me.y} and carrying ${myBeliefs.getCarriedParcels().size} parcels.`);
 });
@@ -70,7 +79,8 @@ socket.on('you', (me) => {
  * Then, uses BDI model: generate desires, convert to intentions, filter to create optimal plan.
  */
 socket.onSensing(async (data) => {
-    // Normalize data to handle undefined properties
+    // ****************** PERCEPT ***************************************
+    // update of perceptions (if something has changed) 
     const parcels = (data.parcels ?? []).map(p => ({
         id: p.id,
         x: p.x ?? 0,
@@ -85,79 +95,20 @@ socket.onSensing(async (data) => {
         y: a.y ?? 0
     }));
 
-    // ── brf(B, ρ): belief revision avec delta ──────────────────
+    // delta {newParcels, goneParcelIds, newAgents, goneAgentIds} used for reconsidering 
     const delta = myBeliefs.updatePercepts(parcels, agents);
-
-    // TODO: find solutions because it's creating error...
-    // myBelief.updateProbabilityMap();
-
-    // ─── BDI LOOP v7 ──────────────────────────────────────────────────────
-
-    // Step 1: Generate desires from beliefs
-    myDesires.genOption(myBeliefs);
-    console.log(`[DESIRES] Current desires: ${[...myDesires.getDesires()].join(', ')}`);
-
-    // Step 2: reconsider(I, B) — seulement sur delta
-    if (myIntentions.reconsider(delta))
-    {
-        console.log('[BDI] Reconsidering intention...');
-        myIntentions.desiresToIntention();
-        myIntentions.filterIntention();
+    if (Object.values(delta).some(arr => arr.length > 0)) {
+        console.log('Delta:', delta);
     }
+    // ***************** CORE OF BDI LOOP  ********************************
+    await core_loop(delta);
+    
+   
 
-    // Step 3: sound(π, I, B) — replan if plan invalide
-    if (myIntentions.getPlan().length === 0 || !myIntentions.isPlanValid())
-    {
-        console.log('[BDI] Plan invalid or empty, replanning...');
-        if (myIntentions.getFilteredIntentions().length > 0)
-        {
-            myIntentions.setPlan();
-        }
-        else
-        {
-            console.log('[BDI] No valid objectives available');
-        }
-    }
-
-    // ─── EXECUTION ────────────────────────────────────────────────────────────
-    // COMMENTED BECAUSE IT INTERFERES WITH PICKUP ACTIONS
-    // Reactive part: immediate pickup/delivery if adjacent
-    // for (let p of myBeliefs.getVisibleParcels()) {
-    //     if (!p.carriedBy) {
-    //         if (myBeliefs.getPlayerPosition().x == p.x - 1 && myBeliefs.getPlayerPosition().y == p.y) {
-    //             console.log('pickup right');
-    //             await socket.emitMove('right');
-    //         } else if (myBeliefs.getPlayerPosition().x == p.x + 1 && myBeliefs.getPlayerPosition().y == p.y) {
-    //             await socket.emitMove('left');
-    //             console.log('pickup left');
-    //         } else if (myBeliefs.getPlayerPosition().y == p.y - 1 && myBeliefs.getPlayerPosition().x == p.x) {
-    //             await socket.emitMove('up');
-    //             console.log('pickup up');
-    //         } else if (myBeliefs.getPlayerPosition().y == p.y + 1 && myBeliefs.getPlayerPosition().x == p.x) {
-    //             await socket.emitMove('down');
-    //             console.log('pickup down');
-    //         }
-    //         if (myBeliefs.getPlayerPosition().x == p.x && myBeliefs.getPlayerPosition().y == p.y) {
-    //             await socket.emitPickup();
-    //             console.log('pickup');
-    //         }
-    //     }
-    // }
-
-    // onSensing is called every server frame, but executeNext action much time
-    // guard, for preventing doing several action in parallel
-    if (!isExecuting)
-    {  
-        isExecuting = true;
-        try
-        {
-            await executeNextAction();
-        }
-        finally
-        {
-            isExecuting = false;
-        }
-    }
+    // ****************** EXECUTING *********************************
+    // guard, for preventing launching several action in parallel
+    // (onSensing is called every server frame, but executeNextAction take much more time)
+    
 });
 
 /**
@@ -180,13 +131,92 @@ socket.on('map', (height, width, tiles) => {
     console.log(`[MAP] Tiles:`, myBeliefs.getTiles());
     console.log(`[MAP] Map received: ${myBeliefs.getMapWidth()}x${myBeliefs.getMapHeight()}`);
 
+    // define the static data in belief
     myBeliefs.defineDeliveryPoint(myBeliefs.getTiles());
     myBeliefs.defineSpawnPoint(myBeliefs.getTiles());
-    setTimeout(() => {}, 1000);
-    // Planning is now handled in sensing events
 });
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+/**
+ * THE LOOP
+ * @param {{
+     *   newParcels: Array<{id: string, x: number, y: number, reward: number}>,
+     *   goneParcelIds: Array<string>,
+     *   newAgents: Array<{id: string, x: number, y: number}>,
+     *   goneAgentIds: Array<string>
+     * }} delta
+ */
+async function core_loop(delta)
+{
+    // look course n°4: BDI Loop diapo 35, agent control loop v7
+    // *********** Line 5 to 9  ******************************
+    // if (delta.newParcels.length === 0 &&
+    //     delta.goneParcelIds.length === 0 &&
+    //     delta.newAgents.length === 0 &&
+    //     delta.goneAgentIds.length === 0 &&
+    //     myIntentions.getPlan().length > 0) {
+    //     return; // No change, no calcule need
+    // }
+    
+
+    if (myIntentions.getPlan().length === 0) 
+    {
+        myDesires.genOption();
+        myIntentions.desiresToIntention();
+        myIntentions.filterIntention();
+        myIntentions.setPlan();
+    }
+    
+    // *********** Line 10: positive affirmation *************
+    // if plan defined AND not succeded AND not impossible
+    const shouldContinue =
+       myIntentions.getPlan().length > 0  // not empty(π)
+    && !myIntentions.succeeded()          // not succeeded(I, B)
+    && !myIntentions.impossible();        // not impossible(I, B)
+
+    if (shouldContinue)
+    {
+        // ******** Line 11+12 Execute action ****************
+        // Guard to send one action request and not many parallel
+        if (!isExecuting)
+        {  
+            isExecuting = true;
+            try
+            {
+                await executeNextAction();
+            }
+            finally
+            {
+                isExecuting = false;
+            }
+        }
+
+        // Belief and perception always update
+        // ******** Line 16 Reconsider ***********************
+        if (myIntentions.reconsider(delta))
+        {
+            console.log('[BDI] Reconsidering intention...');
+            myDesires.genOption();
+            myIntentions.desiresToIntention();
+            myIntentions.filterIntention();
+        }
+
+        // ******** Line 20: sound (isPlanValid) *************
+        // replan if plan invalide
+        if (!myIntentions.isPlanValid())
+        {
+            console.log('[BDI] Plan invalid or empty, replanning...');
+            if (myIntentions.getFilteredIntentions().length > 0)
+            {
+                myIntentions.setPlan();
+            }
+        }
+    }
+}
+
+// ****************************************************************************
+// Helpers function 
+// ****************************************************************************
+
 /**
  * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0)
  * @param {{x: number, y: number}} start
@@ -405,7 +435,6 @@ function generatePathTo_blind(start, goal) {
                 console.log(`[ACTION] Picked up parcel ${p.id}.`);
             }
             myIntentions.getNextAction(); // shift the pickup action
-            myIntentions.clearPlan();     // objective completed
         }
         else
         {
@@ -427,7 +456,7 @@ function generatePathTo_blind(start, goal) {
                 console.log(`[ACTION] Put down parcel ${p.id}.`);
             }
             myIntentions.getNextAction(); // shift the putdown action
-            myIntentions.clearPlan();     // objective completed
+            myIntentions.clearPlan();     // intention completed
         }
         else
         {
