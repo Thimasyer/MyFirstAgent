@@ -5,17 +5,13 @@
 //                - Beliefs: Agent's knowledge/perception about the world (position, parcels, map, etc.)
 //                - Desires: Agent's goals (pickup parcels, deliver, explore)
 //                - Intentions: Agent's selected plans to achieve desires
-// Include:       beliefs.js, desires.js, intentions.js
-// Structure:    1. Beliefs are set in the events. 2. Percept are update with onSening event.
-//               3. Call of bdi_loop: 
-//                  - desires generation
-//                  - filter and sort to get intention
-//                  - plan  (execute is in parallel)
-
-//                                  
-//               
-// TODO:         Where do we have to updateProbabilityMap()? 
-//                  not in onSensing, take to long
+// Include:       beliefs.js, desires.js, intentions.js       
+// 
+// TODO 1:    prendre un spritz parce que vasy c'était long de comprendre la loop v7
+// TODO 2:    Prendre en compte la position des joueurs dans reconsider
+//
+// TODO 3:    Where do we have to updateProbabilityMap()? 
+//                 not in onSensing, take to long
 /*******************************************************************************/
 
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
@@ -103,12 +99,6 @@ socket.onSensing(async (data) => {
     // ***************** CORE OF BDI LOOP  ********************************
     await core_loop(delta);
     
-   
-
-    // ****************** EXECUTING *********************************
-    // guard, for preventing launching several action in parallel
-    // (onSensing is called every server frame, but executeNextAction take much more time)
-    
 });
 
 /**
@@ -148,16 +138,7 @@ socket.on('map', (height, width, tiles) => {
 async function core_loop(delta)
 {
     // look course n°4: BDI Loop diapo 35, agent control loop v7
-    // *********** Line 5 to 9  ******************************
-    // if (delta.newParcels.length === 0 &&
-    //     delta.goneParcelIds.length === 0 &&
-    //     delta.newAgents.length === 0 &&
-    //     delta.goneAgentIds.length === 0 &&
-    //     myIntentions.getPlan().length > 0) {
-    //     return; // No change, no calcule need
-    // }
-    
-
+    // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) 
     {
         myDesires.genOption();
@@ -176,7 +157,8 @@ async function core_loop(delta)
     if (shouldContinue)
     {
         // ******** Line 11+12 Execute action ****************
-        // Guard to send one action request and not many parallel
+        // guard, for preventing launching several action in parallel
+        // (onSensing is called every server frame, but executeNextAction take much more time)
         if (!isExecuting)
         {  
             isExecuting = true;
