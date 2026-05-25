@@ -33,8 +33,11 @@ export class Beliefs {
     /** @type {Array<{ x: number, y: number }>} */
     #spawnPoint = [];
 
-    /** @type {Array<{ x: number, y: number, type: number }>} */
+    /** @type {Array<{ x: number, y: number, type: string }>} */
     #tiles = [];
+
+    /** @type {Array<{ x: number, y: number, type: string }>} */
+    #updatedTiles = []
 
     /** @type {number} */
     #mapWidth = 0;
@@ -126,7 +129,7 @@ export class Beliefs {
 
     /**
      * Getter for tiles.
-     * @returns {Array<{ x: number, y: number, type: number }>}
+     * @returns {Array<{ x: number, y: number, type: string }>}
      */
     getTiles() {
         return this.#tiles;
@@ -302,12 +305,12 @@ export class Beliefs {
     }
 
     /**
-     * Defines delivery tiles (type = 2) based on map tiles.
-     * @param {Array<{x: number, y: number, type: number}>} tiles
+     * Defines delivery tiles (type = "2") based on map tiles.
+     * @param {Array<{x: number, y: number, type: string}>} tiles
      */
     defineDeliveryPoint(tiles) {
         this.#deliveryPoint = tiles
-            .filter(t => t.type == 2)
+            .filter(t => t.type === "2")
             .map(t => ({
                 x: t.x,
                 y: t.y,
@@ -317,12 +320,12 @@ export class Beliefs {
     }
 
     /**
-     * Defines spawn points (type = 1) based on map tiles.
-     * @param {Array<{x: number, y: number, type: number}>} tiles
+     * Defines spawn points (type = "1") based on map tiles.
+     * @param {Array<{x: number, y: number, type: string}>} tiles
      */
     defineSpawnPoint(tiles) {
         this.#spawnPoint = tiles
-            .filter(t => t.type == 1)
+            .filter(t => t.type === "1")
             .map(t => ({
                 x: t.x,
                 y: t.y
@@ -354,7 +357,7 @@ export class Beliefs {
 
     /**
      * Sets the tiles.
-     * @param {Array<{ x: number, y: number, type: number }>} tiles
+     * @param {Array<{ x: number, y: number, type: string }>} tiles
      */
     setTiles(tiles) {
         this.#tiles = tiles;

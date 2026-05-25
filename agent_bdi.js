@@ -7,8 +7,14 @@
 //                - Intentions: Agent's selected plans to achieve desires
 // Include:       beliefs.js, desires.js, intentions.js       
 // 
-// TODO 1:    prendre un spritz parce que vasy c'était long de comprendre la loop v7
-// TODO 2:    Prendre en compte la position des joueurs dans reconsider
+// TODO 1:    prendre un spritz
+// TODO 2:    - Prendre en compte la position des joueurs dans reconsider.
+//            - Que faire si l'agent n'arrive pas à réaliser une action? 
+//              => Mémoire des actions échoué, puis refaire un plan sans l'action inachevable
+//            - Rajouter les tiles fléchés à la logique
+//            - Rajouter les crate (boite jaune) à la logique
+//            - Faire parler l'agent
+
 //
 // TODO 3:    Where do we have to updateProbabilityMap()? 
 //                 not in onSensing, take to long
@@ -67,7 +73,6 @@ socket.on('you', (me) => {
     if (me.id) {
         myBeliefs.setMyId(me.id);
     }
-    console.log(`[YOU] Updated position → x:${me.x}, y:${me.y} and carrying ${myBeliefs.getCarriedParcels().size} parcels.`);
 });
 
 /**
@@ -111,11 +116,11 @@ socket.on('map', (height, width, tiles) => {
     myBeliefs.setMapWidth(width + 1); // error of map dimension
     myBeliefs.setMapHeight(height + 1);
 
-    // Normalize tiles to have numeric type
+    // Normalize tiles to have string type
     myBeliefs.setTiles(tiles.map(t => ({
         x: t.x,
         y: t.y,
-        type: typeof t.type === 'string' ? parseInt(t.type) : t.type
+        type: typeof t.type === 'number' ? t.type.toString() : t.type
     })));
 
     console.log(`[MAP] Tiles:`, myBeliefs.getTiles());
@@ -147,6 +152,7 @@ async function core_loop(delta)
         myIntentions.setPlan();
     }
     
+
     // *********** Line 10: positive affirmation *************
     // if plan defined AND not succeded AND not impossible
     const shouldContinue =
@@ -215,9 +221,9 @@ function generatePathTo(start, goal) {
         walkable[x] = new Array(myBeliefs.getMapHeight()).fill(true);
     }
 
-    // Mark non-walkable tiles (type 0)
+    // Mark non-walkable tiles (type "0")
     myBeliefs.getTiles().forEach(tile => {
-        if (tile.type == 0) {
+        if (tile.type === "0") {
             walkable[tile.x][tile.y] = false;
         }
     });
@@ -300,7 +306,7 @@ function generatePathTo(start, goal) {
 
     // No path found - fall back to blind path
     console.log('[PATHFINDING] No valid path found, falling back to blind path');
-    return generatePathTo_blind(start, goal);
+    return [];
 }
 
 /**
@@ -390,6 +396,7 @@ function generatePathTo_blind(start, goal) {
             return;
         }
 
+        
         const moved = await socket.emitMove(direction);
 
         if (moved)
@@ -400,7 +407,11 @@ function generatePathTo_blind(start, goal) {
         else
         {
             console.log(`[ACTION] Move ${direction} failed, will retry.`);
-            // plan intact: isPlanValid() décidera si on replanne
+            // keep memory of the failed action
+            if (myIntentions.recordFailedAction(action)) {
+                console.log(`[ACTION] 3 consecutive failures for ${action}, triggering smart replan`);
+                myIntentions.smartReplan(action);
+            }
         }
     }
 

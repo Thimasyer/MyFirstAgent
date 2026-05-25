@@ -38,6 +38,15 @@ export class Intentions {
     /** @type {Set<string>} */
     #visitedSpawnPoints = new Set();
 
+    /** @type {Array<string>} Queue of 3 element containing failed action */
+    #failedActionsQueue = [];
+
+    /** @type {Array<string>} Actions currently blocked */
+    #blockedActions = [];
+
+    /** @type {Set<string>} Intentions currently impossible */
+    #currentImpossibleIntentions = new Set();
+
     /**
      * @param {import('./desires.js').Desires} desires - Reference to desires
      * @param {import('./beliefs.js').Beliefs} beliefs - Reference to beliefs
@@ -109,10 +118,15 @@ export class Intentions {
             return;
         }
 
+        // Exclude impossible intentions
+        const possibleIntentions = this.#nonFilteredIntentions.filter(
+            intention => !this.#currentImpossibleIntentions.has(intention)
+        );
+
         // Separate desires by type
-        const pickups = this.#nonFilteredIntentions.filter(d => d.startsWith('pickup_'));
-        const delivers = this.#nonFilteredIntentions.filter(d => d.startsWith('deliver_'));
-        const explores = this.#nonFilteredIntentions.filter(d => d.startsWith('explore_'));
+        const pickups = possibleIntentions.filter(d => d.startsWith('pickup_'));
+        const delivers = possibleIntentions.filter(d => d.startsWith('deliver_'));
+        const explores = possibleIntentions.filter(d => d.startsWith('explore_'));
 
         const playerPos = this.#beliefs.getPlayerPosition();
         const returnIntention = [];
@@ -285,6 +299,24 @@ export class Intentions {
     }
 
     /**
+     * Store the failed action in a queue of 3 element
+     * @param {string} action - failed action
+     * @return {boolean} True if the 3 element are identical
+     */
+    recordFailedAction(action) {
+        this.#failedActionsQueue.push(action);
+
+        // Si 3 échecs identiques consécutifs
+        if (this.#failedActionsQueue.every(a => a === action) && this.#failedActionsQueue.length >= 3) {
+            this.#blockedActions.push(this.#failedActionsQueue[0]);
+            this.#failedActionsQueue = [];
+            return true; // Déclenche replanification
+        }
+
+        return false;
+    }
+
+    /**
      * Checks if current plan is still valid.
      * Returns false if the target location is now unreachable or objective is no longer valid.
      * @returns {boolean}
@@ -330,6 +362,95 @@ export class Intentions {
         this.filterIntention();
         console.log(`[PLAN] Revising filtered intention: ${this.#filteredIntentions.join(', ')}`);
         this.setPlan();
+    }
+
+    /**
+     * Replan when 3 times action failed
+     * @param {string} blockedAction - Action to avoid
+     * Strategy: find one connexe tiles that is walkable and reachable (action not blocked)
+     *           then find a path from this new tile, and set the plan
+     */
+    smartReplan(blockedAction) {
+        this.clearPlan();
+        // necessary for using it impossible() and reconsider()
+        this.#blockedActions.push(blockedAction);
+
+        const possibleStartTiles = []
+
+        const playerPos = this.#beliefs.getPlayerPosition();
+        const directions = [
+            { dx: 0, dy: -1, action: 'move_down' },
+            { dx: 0, dy: 1, action: 'move_up' },
+            { dx: -1, dy: 0, action: 'move_left' },
+            { dx: 1, dy: 0, action: 'move_right' }
+        ];
+
+        // Find a walkable adjacent tile whose access action is not blocked
+        for (const dir of directions) 
+        {
+            const nx = Math.round(playerPos.x) + dir.dx;
+            const ny = Math.round(playerPos.y) + dir.dy;
+
+            // Check boundaries of map
+            if (nx < 0 || nx >= this.#beliefs.getMapWidth() || 
+                ny < 0 || ny >= this.#beliefs.getMapHeight()) {
+                continue; // saute une itération de la boucle for
+            }
+
+            // Check if walkable
+            const tile = this.#beliefs.getTiles().find(t => t.x === nx && t.y === ny);
+            if (!tile || tile.type === "0") {
+                continue; // saute une itération de la boucle for
+            }
+
+            // Check if action to reach it is not blocked
+            if (dir.action === blockedAction) {
+                continue; // saute une itération de la boucle for
+            }
+
+            // Found valid adjacent tile
+            console.log(`[SMART_REPLAN] Found alternative path via (${nx},${ny})`);
+            
+            // Build new plan: first action is the direction to the valid tile
+            const newPlan = [dir.action];
+            
+            // If we have a current objective, calculate path from adjacent tile to objective
+            if (this.#currentObjective) {
+                const parts = this.#currentObjective.split('_');
+                const type = parts[0];
+                const objX = parseInt(parts[1]);
+                const objY = parseInt(parts[2]);
+                
+                // Generate path from adjacent tile (nx, ny) to objective (objX, objY)
+                const pathToObjective = this.#generatePathTo({x: nx, y: ny}, {x: objX, y: objY});
+                // Dans smartReplan, après generation du path :
+                if (pathToObjective.length === 0) {
+                    console.log(`[SMART_REPLAN] No path from (${nx},${ny}) to objective`);
+                    continue; // Essayer un autre tile adjacent
+                }
+
+                newPlan.push(...pathToObjective);
+                
+                // Add final action based on intention type
+                if (type === 'pickup') {
+                    newPlan.push(this.#currentObjective);
+                } else if (type === 'deliver') {
+                    newPlan.push('putdown');
+                }
+                // explore has no final action, just reach the location
+            }
+            
+            this.#plan = newPlan;
+            console.log(`[SMART_REPLAN] New plan: ${newPlan.join(' -> ')}`);
+            return;
+        }
+
+        // If no adjacent tile is reachable, mark current intention as impossible
+        if (this.#currentObjective) {
+            this.#currentImpossibleIntentions.add(this.#currentObjective);
+            console.log(`[SMART_REPLAN] All adjacent tiles blocked. Marking intention as impossible: ${this.#currentObjective}`);
+            this.revisePlan();
+        }
     }
 
     /**
@@ -380,6 +501,7 @@ export class Intentions {
     clearPlan() {
         this.#plan = [];
         this.#currentObjective = null;
+        console.log('[PLAN] Cleared')
     }
 
     /**
@@ -444,14 +566,23 @@ export class Intentions {
         }
 
         // CASE 2: deliver en cours
-        if (type === 'deliver')
+        if (type === 'deliver') 
         {
-            if (this.#beliefs.getCarriedParcels().size === 0)
-            {
+            if (this.#beliefs.getCarriedParcels().size === 0) {
                 console.log('[RECONSIDER] Nothing to deliver.');
                 return true;
             }
-            return false; // continuer vers la livraison
+            // Reconsider if a parcel pop-up
+            const playerPos = this.#beliefs.getPlayerPosition();
+            const closeParcel = delta.newParcels.some(p => {
+                const dist = Math.abs(playerPos.x - p.x) + Math.abs(playerPos.y - p.y);
+                return dist <= 5; // Seuil de distance (ex: 2 tiles)
+            });
+            if (closeParcel) {
+                console.log('[RECONSIDER] New close parcel appeared during deliver.');
+                return true;
+            }
+            return false;
         }
 
         // CASE 3: explore en cours
@@ -487,19 +618,23 @@ export class Intentions {
 
         if (type === 'pickup')
         {
-            // Succès: la parcel est maintenant portée par l'agent
+            // Success: parcel is carried by agent
             return this.#beliefs.getCarriedParcels().size > 0
                 && !this.#beliefs.getVisibleParcels()
                     .some(p => !p.carriedBy && p.x === x && p.y === y);
         }
         if (type === 'deliver')
         {
-            // Succès: l'agent ne porte plus rien
-            return this.#beliefs.getCarriedParcels().size === 0;
+            // success: agent is on a delivery parcel AND carry no parcel anymore
+            const pos = this.#beliefs.getPlayerPosition();
+            const tile = this.#beliefs.getTiles().find(
+                t => t.x === Math.round(pos.x) && t.y === Math.round(pos.y)
+            );
+            return this.#beliefs.getCarriedParcels().size === 0 && tile?.type === "2";
         }
         if (type === 'explore')
         {
-            // Succès: l'agent est sur la tile cible
+            // Success: agent is on goal
             return Math.round(pos.x) === x && Math.round(pos.y) === y;
         }
 
@@ -507,13 +642,18 @@ export class Intentions {
     }
 
     /**
-     * Checks if current intention has become impossible.
+     * Checks if current intention
      * Implements impossible(I, B) from BDI loop v7.
      * @returns {boolean}
      */
     impossible()
     {
         if (!this.#currentObjective) return false;
+
+        // Check if intention is marked as impossible
+        if (this.#currentImpossibleIntentions.has(this.#currentObjective)) {
+            return true;
+        }
 
         const parts = this.#currentObjective.split('_');
         const type  = parts[0];
@@ -522,25 +662,26 @@ export class Intentions {
 
         if (type === 'pickup')
         {
-            // Impossible: parcel disparue et non portée
+            // Impossible: parcel disapear OR carried by another agent
             const parcelGone = !this.#beliefs.getVisibleParcels()
                 .some(p => !p.carriedBy && p.x === x && p.y === y);
             const notCarried = this.#beliefs.getCarriedParcels().size === 0;
             return parcelGone && notCarried;
+
+            
         }
         if (type === 'deliver')
         {
-            // Impossible: rien à livrer
+            // Impossible: nothing to deliver
             return this.#beliefs.getCarriedParcels().size === 0;
         }
         if (type === 'explore')
         {
-            // Impossible: tile cible non-walkable
+            // Impossible: the goal tile is non-walkable
             const tile = this.#beliefs.getTiles()
                 .find(t => t.x === x && t.y === y);
-            return tile?.type === 0;
+            return tile?.type === "0";
         }
-
         return false;
     }
 }
