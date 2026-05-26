@@ -180,7 +180,7 @@ async function core_loop(delta)
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
-        if (myIntentions.reconsider(delta))
+        if (myIntentions.reconsider(delta) && !myIntentions.isSmartReplanActive())
         {
             console.log('[BDI] Reconsidering intention...');
             myDesires.genOption();
@@ -190,7 +190,7 @@ async function core_loop(delta)
 
         // ******** Line 20: sound (isPlanValid) *************
         // replan if plan invalide
-        if (!myIntentions.isPlanValid())
+        if (!myIntentions.isPlanValid() && !myIntentions.isSmartReplanActive())
         {
             console.log('[BDI] Plan invalid or empty, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)
@@ -381,6 +381,7 @@ function generatePathTo_blind(start, goal) {
  * Clears plan on failure to trigger re-planning.
  */async function executeNextAction()
 {
+    console.log('[EXECUTENEXTECTION]: Filtered intention', myIntentions.getFilteredIntentions())
     const action = myIntentions.getPlan()[0];
     if (!action) return;
 
@@ -408,6 +409,7 @@ function generatePathTo_blind(start, goal) {
         {
             console.log(`[ACTION] Move ${direction} failed, will retry.`);
             // keep memory of the failed action
+            console.log('[ACTION]: RecordFailedAction:',myIntentions.recordFailedAction(action) )
             if (myIntentions.recordFailedAction(action)) {
                 console.log(`[ACTION] 3 consecutive failures for ${action}, triggering smart replan`);
                 myIntentions.smartReplan(action);

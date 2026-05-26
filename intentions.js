@@ -47,6 +47,9 @@ export class Intentions {
     /** @type {Set<string>} Intentions currently impossible */
     #currentImpossibleIntentions = new Set();
 
+    /** @type {boolean} Flag to prevent normal replanning from overriding smartReplan */
+    #smartReplanActive = false;
+
     /**
      * @param {import('./desires.js').Desires} desires - Reference to desires
      * @param {import('./beliefs.js').Beliefs} beliefs - Reference to beliefs
@@ -56,6 +59,21 @@ export class Intentions {
         this.#desires = desires;
         this.#beliefs = beliefs;
         this.#generatePathTo = generatePathTo;
+    }
+
+    /**
+     * Checks if smartReplan is currently active
+     * @returns {boolean}
+     */
+    isSmartReplanActive() {
+        return this.#smartReplanActive;
+    }
+
+    /**
+     * Resets the smartReplan flag (call after plan is consumed)
+     */
+    resetSmartReplanFlag() {
+        this.#smartReplanActive = false;
     }
 
     /**
@@ -267,7 +285,8 @@ export class Intentions {
             }
         }
 
-        const objective = this.#filteredIntentions.shift();
+        const objective = this.#filteredIntentions[0];
+        this.#filteredIntentions.shift();
         if (!objective) {
             console.log('[PLAN] No objectives to plan');
             this.#plan = [];
@@ -307,7 +326,7 @@ export class Intentions {
         this.#failedActionsQueue.push(action);
 
         // Si 3 échecs identiques consécutifs
-        if (this.#failedActionsQueue.every(a => a === action) && this.#failedActionsQueue.length >= 3) {
+        if (this.#failedActionsQueue.every(a => a === action) && this.#failedActionsQueue.length >= 1) {
             this.#blockedActions.push(this.#failedActionsQueue[0]);
             this.#failedActionsQueue = [];
             return true; // Déclenche replanification
@@ -371,9 +390,13 @@ export class Intentions {
      *           then find a path from this new tile, and set the plan
      */
     smartReplan(blockedAction) {
+        
         this.clearPlan();
+        // Set flag to prevent normal replanning from overriding this
+        this.#smartReplanActive = true;
         // necessary for using it impossible() and reconsider()
         this.#blockedActions.push(blockedAction);
+        console.log('[SMART_REPLAN]: BockedAction', this.#blockedActions);
 
         const possibleStartTiles = []
 
@@ -385,9 +408,15 @@ export class Intentions {
             { dx: 1, dy: 0, action: 'move_right' }
         ];
 
+        // Random choice of next dir
+        
+
         // Find a walkable adjacent tile whose access action is not blocked
-        for (const dir of directions) 
+        for (let dir of directions) 
         {
+            const randomIndex = Math.floor(Math.random() * directions.length);
+            const randomDir = directions[randomIndex];
+            dir = randomDir;
             const nx = Math.round(playerPos.x) + dir.dx;
             const ny = Math.round(playerPos.y) + dir.dy;
 
@@ -409,12 +438,14 @@ export class Intentions {
             }
 
             // Found valid adjacent tile
-            console.log(`[SMART_REPLAN] Found alternative path via (${nx},${ny})`);
+            console.log(`[SMART_REPLAN] Found alternative path via (${nx},${ny}), dir: ${dir.action}`);
             
             // Build new plan: first action is the direction to the valid tile
             const newPlan = [dir.action];
             
             // If we have a current objective, calculate path from adjacent tile to objective
+            console.log('[SMART_REPLAN]: current objectif', this.#currentObjective)
+            console.log('[SMART_REPLAN]: Filtered intention', this.#filteredIntentions)
             if (this.#currentObjective) {
                 const parts = this.#currentObjective.split('_');
                 const type = parts[0];
@@ -423,6 +454,7 @@ export class Intentions {
                 
                 // Generate path from adjacent tile (nx, ny) to objective (objX, objY)
                 const pathToObjective = this.#generatePathTo({x: nx, y: ny}, {x: objX, y: objY});
+                console.log('[SMART_REPLAN]: Generate path:', pathToObjective)
                 // Dans smartReplan, après generation du path :
                 if (pathToObjective.length === 0) {
                     console.log(`[SMART_REPLAN] No path from (${nx},${ny}) to objective`);
@@ -449,7 +481,6 @@ export class Intentions {
         if (this.#currentObjective) {
             this.#currentImpossibleIntentions.add(this.#currentObjective);
             console.log(`[SMART_REPLAN] All adjacent tiles blocked. Marking intention as impossible: ${this.#currentObjective}`);
-            this.revisePlan();
         }
     }
 
@@ -458,7 +489,12 @@ export class Intentions {
      * @returns {string|null}
      */
     getNextAction() {
-        return this.#plan.shift() || null;
+        const action = this.#plan.shift() || null;
+        // Reset smartReplan flag once we start consuming the plan
+        if (this.#smartReplanActive && this.#plan.length === 0) {
+            this.resetSmartReplanFlag();
+        }
+        return action;
     }
 
     /**
