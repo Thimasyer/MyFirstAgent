@@ -38,17 +38,14 @@ export class Intentions {
     /** @type {Set<string>} */
     #visitedSpawnPoints = new Set();
 
-    /** @type {Array<string>} Queue of 3 element containing failed action */
-    #failedActionsQueue = [];
-
-    /** @type {Array<string>} Actions currently blocked */
-    #blockedActions = [];
-
     /** @type {Set<string>} Intentions currently impossible */
     #currentImpossibleIntentions = new Set();
+    
+    /** @type {Array<string>} */
+    #failedActionsQueue = [];
 
-    /** @type {boolean} Flag to prevent normal replanning from overriding smartReplan */
-    #smartReplanActive = false;
+    /** @type {boolean} */
+    #smartReplanActive = false
 
     /**
      * @param {import('./desires.js').Desires} desires - Reference to desires
@@ -276,8 +273,9 @@ export class Intentions {
     /**
      * Sets the plan from the current objective in filteredIntention.
      * Generates path to the objective and appends appropriate action.
-     */
-    setPlan() {
+    * @param {Set<{x: number, y: number}>} blockedTiles obstacles to avoid */
+    setPlan(blockedTiles = []) {
+
         if (this.#filteredIntentions.length === 0) {
             console.log('[PLAN] filteredIntention empty, falling back to first intention');
             if (this.#nonFilteredIntentions.length > 0) {
@@ -286,7 +284,10 @@ export class Intentions {
         }
 
         const objective = this.#filteredIntentions[0];
+        // HERE IS IT RIGHT ???????????????
         this.#filteredIntentions.shift();
+
+        // When there is no intention, clear the plan
         if (!objective) {
             console.log('[PLAN] No objectives to plan');
             this.#plan = [];
@@ -303,7 +304,7 @@ export class Intentions {
         const y = parseInt(parts[2]);
 
         // Generate path to objective location
-        const path = this.#generatePathTo(this.#beliefs.getPlayerPosition(), { x, y });
+        const path = this.#generatePathTo(this.#beliefs.getPlayerPosition(), { x, y }, blockedTiles);
 
         // Add action at destination
         if (type === 'pickup') {
@@ -325,11 +326,13 @@ export class Intentions {
     recordFailedAction(action) {
         this.#failedActionsQueue.push(action);
 
-        // Si 3 échecs identiques consécutifs
-        if (this.#failedActionsQueue.every(a => a === action) && this.#failedActionsQueue.length >= 1) {
-            this.#blockedActions.push(this.#failedActionsQueue[0]);
-            this.#failedActionsQueue = [];
-            return true; // Déclenche replanification
+        // Si 3 échecs identiques consécutifs, retourne vrai puis clear l'array
+        if (this.#failedActionsQueue.length >= 3) {
+            const lastThree = this.#failedActionsQueue.slice(-3);
+            if (lastThree.every(a => a === action)) {
+                this.#failedActionsQueue = []; // Clear l'array
+                return true; // Déclenche replanification
+            }
         }
 
         return false;
@@ -367,121 +370,6 @@ export class Intentions {
             return this.#beliefs.getCarriedParcels().size === 0; 
         }
         return false;
-    }
-
-    /**
-     * Revises the plan: clears current plan and generates a new one.
-     */
-    revisePlan() {
-        console.log('[PLAN] Revising plan...');
-        this.#plan = [];
-        this.#currentObjective = null;
-        this.#filteredIntentions = [];
-        this.desiresToIntention();
-        this.filterIntention();
-        console.log(`[PLAN] Revising filtered intention: ${this.#filteredIntentions.join(', ')}`);
-        this.setPlan();
-    }
-
-    /**
-     * Replan when 3 times action failed
-     * @param {string} blockedAction - Action to avoid
-     * Strategy: find one connexe tiles that is walkable and reachable (action not blocked)
-     *           then find a path from this new tile, and set the plan
-     */
-    smartReplan(blockedAction) {
-        
-        this.clearPlan();
-        // Set flag to prevent normal replanning from overriding this
-        this.#smartReplanActive = true;
-        // necessary for using it impossible() and reconsider()
-        this.#blockedActions.push(blockedAction);
-        console.log('[SMART_REPLAN]: BockedAction', this.#blockedActions);
-
-        const possibleStartTiles = []
-
-        const playerPos = this.#beliefs.getPlayerPosition();
-        const directions = [
-            { dx: 0, dy: -1, action: 'move_down' },
-            { dx: 0, dy: 1, action: 'move_up' },
-            { dx: -1, dy: 0, action: 'move_left' },
-            { dx: 1, dy: 0, action: 'move_right' }
-        ];
-
-        // Random choice of next dir
-        
-
-        // Find a walkable adjacent tile whose access action is not blocked
-        for (let dir of directions) 
-        {
-            const randomIndex = Math.floor(Math.random() * directions.length);
-            const randomDir = directions[randomIndex];
-            dir = randomDir;
-            const nx = Math.round(playerPos.x) + dir.dx;
-            const ny = Math.round(playerPos.y) + dir.dy;
-
-            // Check boundaries of map
-            if (nx < 0 || nx >= this.#beliefs.getMapWidth() || 
-                ny < 0 || ny >= this.#beliefs.getMapHeight()) {
-                continue; // saute une itération de la boucle for
-            }
-
-            // Check if walkable
-            const tile = this.#beliefs.getTiles().find(t => t.x === nx && t.y === ny);
-            if (!tile || tile.type === "0") {
-                continue; // saute une itération de la boucle for
-            }
-
-            // Check if action to reach it is not blocked
-            if (dir.action === blockedAction) {
-                continue; // saute une itération de la boucle for
-            }
-
-            // Found valid adjacent tile
-            console.log(`[SMART_REPLAN] Found alternative path via (${nx},${ny}), dir: ${dir.action}`);
-            
-            // Build new plan: first action is the direction to the valid tile
-            const newPlan = [dir.action];
-            
-            // If we have a current objective, calculate path from adjacent tile to objective
-            console.log('[SMART_REPLAN]: current objectif', this.#currentObjective)
-            console.log('[SMART_REPLAN]: Filtered intention', this.#filteredIntentions)
-            if (this.#currentObjective) {
-                const parts = this.#currentObjective.split('_');
-                const type = parts[0];
-                const objX = parseInt(parts[1]);
-                const objY = parseInt(parts[2]);
-                
-                // Generate path from adjacent tile (nx, ny) to objective (objX, objY)
-                const pathToObjective = this.#generatePathTo({x: nx, y: ny}, {x: objX, y: objY});
-                console.log('[SMART_REPLAN]: Generate path:', pathToObjective)
-                // Dans smartReplan, après generation du path :
-                if (pathToObjective.length === 0) {
-                    console.log(`[SMART_REPLAN] No path from (${nx},${ny}) to objective`);
-                    continue; // Essayer un autre tile adjacent
-                }
-
-                newPlan.push(...pathToObjective);
-                
-                // Add final action based on intention type
-                if (type === 'pickup') {
-                    newPlan.push(this.#currentObjective);
-                } else if (type === 'deliver') {
-                    newPlan.push('putdown');
-                }
-                // explore has no final action, just reach the location
-            }
-            
-            this.#plan = newPlan;
-            console.log(`[SMART_REPLAN] New plan: ${newPlan.join(' -> ')}`);
-            return;
-        }
-
-        // If no adjacent tile is reachable, mark current intention as impossible
-        if (this.#currentObjective) {
-            this.#currentImpossibleIntentions.add(this.#currentObjective);
-            console.log(`[SMART_REPLAN] All adjacent tiles blocked. Marking intention as impossible: ${this.#currentObjective}`);
-        }
     }
 
     /**
@@ -538,6 +426,11 @@ export class Intentions {
         this.#plan = [];
         this.#currentObjective = null;
         console.log('[PLAN] Cleared')
+    }
+
+    /** clear failedActionsQueue */
+    clearFailedActionsQueue() {
+        this.#failedActionsQueue.clear();
     }
 
     /**

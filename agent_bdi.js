@@ -73,7 +73,8 @@ socket.on('you', (me) => {
     if (me.id) {
         myBeliefs.setMyId(me.id);
     }
-});
+})
+
 
 /**
  * Updates visible parcels and agents from sensing data.
@@ -206,12 +207,13 @@ async function core_loop(delta)
 // ****************************************************************************
 
 /**
- * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0)
+ * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0) and dynamic obstacles
  * @param {{x: number, y: number}} start
  * @param {{x: number, y: number}} goal
+ * @param {Array<{x: number, y: number}>} blockedPositions - Dynamic obstacles to avoid
  * @returns {Array<string>} List of move actions (move_up, move_down, move_left, move_right)
  */
-function generatePathTo(start, goal) {
+function generatePathTo(start, goal, blockedPositions = []) {
     const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
     const goalPos = { x: Math.round(goal.x), y: Math.round(goal.y) };
 
@@ -221,10 +223,18 @@ function generatePathTo(start, goal) {
         walkable[x] = new Array(myBeliefs.getMapHeight()).fill(true);
     }
 
-    // Mark non-walkable tiles (type "0")
+    // Mark non-walkable tiles (type "0") and dynamic obstacles
     myBeliefs.getTiles().forEach(tile => {
         if (tile.type === "0") {
             walkable[tile.x][tile.y] = false;
+        }
+    });
+
+    // Mark dynamic obstacles as non-walkable
+    blockedPositions.forEach(pos => {
+        if (pos.x >= 0 && pos.x < myBeliefs.getMapWidth() &&
+            pos.y >= 0 && pos.y < myBeliefs.getMapHeight()) {
+            walkable[pos.x][pos.y] = false;
         }
     });
 
@@ -304,8 +314,8 @@ function generatePathTo(start, goal) {
         }
     }
 
-    // No path found - fall back to blind path
-    console.log('[PATHFINDING] No valid path found, falling back to blind path');
+    // No path found
+    console.log(`[PATHFINDING] Bloqué : aucun chemin valide vers (${goalPos.x},${goalPos.y})`);
     return [];
 }
 
@@ -408,12 +418,32 @@ function generatePathTo_blind(start, goal) {
         else
         {
             console.log(`[ACTION] Move ${direction} failed, will retry.`);
-            // keep memory of the failed action
-            console.log('[ACTION]: RecordFailedAction:',myIntentions.recordFailedAction(action) )
-            if (myIntentions.recordFailedAction(action)) {
-                console.log(`[ACTION] 3 consecutive failures for ${action}, triggering smart replan`);
-                myIntentions.smartReplan(action);
+            
+            // after 3 failed action, replan  with blocked tiles
+            if(myIntentions.recordFailedAction(action))
+            {
+                //myIntentions.clearFailedActionsQueue();
+                // get the blocked tiles
+                let newBlockedTile = {x: 0, y:0}
+                switch (action) {
+                    case 'move_up':
+                        newBlockedTile.x = myBeliefs.getPlayerPosition().x;
+                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y+1;
+                    case 'move_down':
+                        newBlockedTile.x = myBeliefs.getPlayerPosition().x;
+                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y-1;
+                    case 'move_right':
+                        newBlockedTile.x = myBeliefs.getPlayerPosition().x+1;
+                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
+                    case 'move_left':
+                        newBlockedTile.x = myBeliefs.getPlayerPosition().x-1;
+                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
+                }
+                myBeliefs.blockedTiles.add(newBlockedTile);
+                console.log('[ACTION FAILED]: blocekdTiles', myBeliefs.blockedTiles);
+                myIntentions.setPlan(myBeliefs.blockedTiles);
             }
+          
         }
     }
 

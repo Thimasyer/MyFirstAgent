@@ -36,8 +36,8 @@ export class Beliefs {
     /** @type {Array<{ x: number, y: number, type: string }>} */
     #tiles = [];
 
-    /** @type {Array<{ x: number, y: number, type: string }>} */
-    #updatedTiles = []
+     /** @type {Set<{x: number, y: number}>} Dynamic obstacles to avoid */
+    blockedTiles = new Set();
 
     /** @type {number} */
     #mapWidth = 0;
