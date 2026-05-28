@@ -44,6 +44,27 @@ myDesires.setLinkedIntentions(myIntentions); // create circular reference for dy
 /** @type {boolean} Guard to prevent concurrent action execution */
 let isExecuting = false;
 
+// ─── Heartbeat ──────────────────────────────────────────────────────────────
+const HEARTBEAT_DELAY_MS = 500;
+let lastSensingTime = Date.now();
+
+/**
+ * Heartbeat mechanism: if no sensing data arrives for HEARTBEAT_DELAY_MS,
+ * trigger core_loop to ensure the BDI cycle continues.
+ */
+function startHeartbeat() {
+    setInterval(() => {
+        const now = Date.now();
+        if (now - lastSensingTime >= HEARTBEAT_DELAY_MS) {
+            console.log('[HEARTBEAT] No sensing data received, triggering core_loop...');
+            core_loop({ newParcels: [], goneParcelIds: [], newAgents: [], goneAgentIds: [] });
+        }
+    }, HEARTBEAT_DELAY_MS);
+}
+
+// Start heartbeat on initialization
+startHeartbeat();
+
 // ─── Connection ───────────────────────────────────────────────────────────────
 const socket = DjsConnect(HOST, TOKEN);
 if (!socket) {
@@ -81,6 +102,9 @@ socket.on('you', (me) => {
  * Then, uses BDI model: generate desires, convert to intentions, filter to create optimal plan.
  */
 socket.onSensing(async (data) => {
+    // Update last sensing time for heartbeat
+    lastSensingTime = Date.now();
+
     // ****************** PERCEPT ***************************************
     // update of perceptions (if something has changed) 
     const parcels = (data.parcels ?? []).map(p => ({
@@ -104,6 +128,7 @@ socket.onSensing(async (data) => {
     }
     // ***************** CORE OF BDI LOOP  ********************************
     await core_loop(delta);
+    
     
 });
 
@@ -389,9 +414,11 @@ function generatePathTo_blind(start, goal) {
  * Executes the next action in the intentions plan.
  * Handles movement, pickup, and putdown actions.
  * Clears plan on failure to trigger re-planning.
- */async function executeNextAction()
+ */
+async function executeNextAction()
 {
-    console.log('[EXECUTENEXTECTION]: Filtered intention', myIntentions.getFilteredIntentions())
+    if (myIntentions.getFilteredIntentions().length) {
+        console.log('[EXECUTENEXTECTION]: Filtered intention', myIntentions.getFilteredIntentions()) }
     const action = myIntentions.getPlan()[0];
     if (!action) return;
 
@@ -412,8 +439,14 @@ function generatePathTo_blind(start, goal) {
 
         if (moved)
         {
+            // When the last action of plan is executed shift intention
+            if (myIntentions.getPlan().length === 1) {
+                myIntentions.shiftIntention();
+
+            }
             console.log(`[ACTION] Moved ${direction}.`);
             myIntentions.getNextAction(); // shift only on success
+            
         }
         else
         {
@@ -422,6 +455,7 @@ function generatePathTo_blind(start, goal) {
             // after 3 failed action, replan  with blocked tiles
             if(myIntentions.recordFailedAction(action))
             {
+                console.log('[FAILED ACTION] 3 action recorded')
                 //myIntentions.clearFailedActionsQueue();
                 // get the blocked tiles
                 let newBlockedTile = {x: 0, y:0}
@@ -429,16 +463,20 @@ function generatePathTo_blind(start, goal) {
                     case 'move_up':
                         newBlockedTile.x = myBeliefs.getPlayerPosition().x;
                         newBlockedTile.y =  myBeliefs.getPlayerPosition().y+1;
+                        break;
                     case 'move_down':
                         newBlockedTile.x = myBeliefs.getPlayerPosition().x;
                         newBlockedTile.y =  myBeliefs.getPlayerPosition().y-1;
+                        break;
                     case 'move_right':
                         newBlockedTile.x = myBeliefs.getPlayerPosition().x+1;
                         newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
+                        break;
                     case 'move_left':
                         newBlockedTile.x = myBeliefs.getPlayerPosition().x-1;
                         newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
                 }
+                console.log('[PLAYER POS] ', myBeliefs.getPlayerPosition());
                 myBeliefs.blockedTiles.add(newBlockedTile);
                 console.log('[ACTION FAILED]: blocekdTiles', myBeliefs.blockedTiles);
                 myIntentions.setPlan(myBeliefs.blockedTiles);

@@ -75,10 +75,13 @@ export class Intentions {
 
     /**
      * Marks a spawn point as visited.
-     * @param {String} intentionName - The name of intention
+     * @param {Array<String>} intentionName - The name of intention
      */
     markSpawnPointsAsVisited(intentionName) {
-        this.#visitedSpawnPoints.add(intentionName);
+        intentionName.forEach(e => {
+            this.#visitedSpawnPoints.add(e);
+        });
+        
     }
 
     /**
@@ -88,6 +91,11 @@ export class Intentions {
      */
     isSpawnPointVisited(intentionName) {
         return this.#visitedSpawnPoints.has(intentionName);
+    }
+
+    /** Getter function for visitedSpawnPoint */
+    getSpawnPointVisited() {
+        return this.#visitedSpawnPoints;
     }
 
 
@@ -179,14 +187,18 @@ export class Intentions {
                     
                 // if closest explore is in vision range (stil no parcel visible)
                 } else {
-                    // mark this explore as visited
-                    this.markSpawnPointsAsVisited(closest);
+                    // mark visible explores as visited
+                   const visibleSpawnPoints = explores.filter(e => 
+                        this.#getIntentionDistance(e, playerPos) < this.#beliefs.getVisionRange()
+                   )
+                    this.markSpawnPointsAsVisited(visibleSpawnPoints);
                     // Search the closest explore tiles outside vision range
                     const outsideExplores = explores.filter(e => 
                         this.#getIntentionDistance(e, playerPos) > this.#beliefs.getVisionRange()
                         // and filter out already visited spawn points to avoid loops
                         && !this.isSpawnPointVisited(e)
                     );
+                    console.log('[FILTER] visitedSpanwPoints:', this.getVisitedSpawnPoints());
                     // Search the closest in set of explore outside vision range
                     const closestOutsideVisionRange = this.#findClosestIntention(outsideExplores, playerPos);
                     if (closestOutsideVisionRange) {
@@ -274,7 +286,7 @@ export class Intentions {
      * Sets the plan from the current objective in filteredIntention.
      * Generates path to the objective and appends appropriate action.
     * @param {Set<{x: number, y: number}>} blockedTiles obstacles to avoid */
-    setPlan(blockedTiles = []) {
+    setPlan(blockedTiles = new Set()) {
 
         if (this.#filteredIntentions.length === 0) {
             console.log('[PLAN] filteredIntention empty, falling back to first intention');
@@ -285,7 +297,6 @@ export class Intentions {
 
         const objective = this.#filteredIntentions[0];
         // HERE IS IT RIGHT ???????????????
-        this.#filteredIntentions.shift();
 
         // When there is no intention, clear the plan
         if (!objective) {
@@ -304,7 +315,8 @@ export class Intentions {
         const y = parseInt(parts[2]);
 
         // Generate path to objective location
-        const path = this.#generatePathTo(this.#beliefs.getPlayerPosition(), { x, y }, blockedTiles);
+        const path = this.#generatePathTo(this.#beliefs.getPlayerPosition(), 
+            { x, y }, blockedTiles);
 
         // Add action at destination
         if (type === 'pickup') {
@@ -315,7 +327,9 @@ export class Intentions {
         // No action needed for explore, just reach the location
 
         this.#plan = path;
-        console.log(`[PLAN] New plan set for objective "${objective}": ${path.length} actions; filteredIntention remaining ${this.#filteredIntentions.length}`);
+        console.log(`[PLAN] New plan set for objective "${objective}":
+             ${path.length} actions; filteredIntention remaining ${this.#filteredIntentions.length}`);
+        console.log('[PLAN IS]', this.#plan)
     }
 
     /**
@@ -325,7 +339,7 @@ export class Intentions {
      */
     recordFailedAction(action) {
         this.#failedActionsQueue.push(action);
-
+        console.log('[FAILED ACTION] Recorded: ', this.#failedActionsQueue);
         // Si 3 échecs identiques consécutifs, retourne vrai puis clear l'array
         if (this.#failedActionsQueue.length >= 3) {
             const lastThree = this.#failedActionsQueue.slice(-3);
@@ -431,6 +445,10 @@ export class Intentions {
     /** clear failedActionsQueue */
     clearFailedActionsQueue() {
         this.#failedActionsQueue.clear();
+    }
+
+    shiftIntention() {
+        this.#filteredIntentions.shift();
     }
 
     /**
