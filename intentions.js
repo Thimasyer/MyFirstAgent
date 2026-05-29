@@ -123,7 +123,7 @@ export class Intentions {
         }
         // log only if intention changed
         if (JSON.stringify(oldIntentions) !== JSON.stringify(this.#nonFilteredIntentions)) {
-            console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
+            //console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
         }  
     }
 
@@ -151,7 +151,7 @@ export class Intentions {
         const delivers = possibleIntentions.filter(d => d.startsWith('deliver_'));
         const explores = possibleIntentions.filter(d => d.startsWith('explore_'));
 
-        const playerPos = this.#beliefs.getPlayerPosition();
+        const playerPos = this.#beliefs.getMyPosition();
         const returnIntention = [];
 
         // If a parcel is visible 
@@ -168,7 +168,7 @@ export class Intentions {
                 const closestDeliver = this.#findClosestIntention(delivers, playerPos);
                 if (closestDeliver) {
                     returnIntention.push(closestDeliver);
-                    console.log(`[FILTER] Prioritizing deliver: ${closestDeliver}`);
+                   // console.log(`[FILTER] Prioritizing deliver: ${closestDeliver}`);
                 }
             }
         }
@@ -181,7 +181,7 @@ export class Intentions {
                 if (this.#getIntentionDistance(closest, playerPos) >= this.#beliefs.getVisionRange()) {
                     // but keep in mind the already visited spawn points to avoid loops
                     if (!this.isSpawnPointVisited(closest)) {
-                        console.log('[FILTER] Closest explore already outside vision range. Adding', closest);
+                       // console.log('[FILTER] Closest explore already outside vision range. Adding', closest);
                         returnIntention.push(closest);
                     }
                     
@@ -198,11 +198,11 @@ export class Intentions {
                         // and filter out already visited spawn points to avoid loops
                         && !this.isSpawnPointVisited(e)
                     );
-                    console.log('[FILTER] visitedSpanwPoints:', this.getVisitedSpawnPoints());
+                    //console.log('[FILTER] visitedSpanwPoints:', this.getVisitedSpawnPoints());
                     // Search the closest in set of explore outside vision range
                     const closestOutsideVisionRange = this.#findClosestIntention(outsideExplores, playerPos);
                     if (closestOutsideVisionRange) {
-                        console.log('[FILTER] Closest explore in range of vision. Add one not visible:', closestOutsideVisionRange);
+                        //console.log('[FILTER] Closest explore in range of vision. Add one not visible:', closestOutsideVisionRange);
                         returnIntention.push(closestOutsideVisionRange);
                     }
                     else {
@@ -210,7 +210,7 @@ export class Intentions {
                     }
                 }
             } else {
-                console.log('[FILTER] ERROR, closest found')
+                console.log('[FILTER] ERROR, closest not found')
             }
         }
 
@@ -285,22 +285,22 @@ export class Intentions {
     /**
      * Sets the plan from the current objective in filteredIntention.
      * Generates path to the objective and appends appropriate action.
-    * @param {Set<{x: number, y: number}>} blockedTiles obstacles to avoid */
-    setPlan(blockedTiles = new Set()) {
+    **/
+    setPlan() {
 
         if (this.#filteredIntentions.length === 0) {
-            console.log('[PLAN] filteredIntention empty, falling back to first intention');
+            //console.log('[PLAN] filteredIntention empty, falling back to first intention');
             if (this.#nonFilteredIntentions.length > 0) {
                 this.#filteredIntentions = [...this.#nonFilteredIntentions];
             }
         }
 
+
         const objective = this.#filteredIntentions[0];
-        // HERE IS IT RIGHT ???????????????
 
         // When there is no intention, clear the plan
         if (!objective) {
-            console.log('[PLAN] No objectives to plan');
+            //console.log('[PLAN] No objectives to plan');
             this.#plan = [];
             this.#currentObjective = null;
             return;
@@ -315,8 +315,8 @@ export class Intentions {
         const y = parseInt(parts[2]);
 
         // Generate path to objective location
-        const path = this.#generatePathTo(this.#beliefs.getPlayerPosition(), 
-            { x, y }, blockedTiles);
+        const path = this.#generatePathTo(this.#beliefs.getMyPosition(), 
+            { x, y });
 
         // Add action at destination
         if (type === 'pickup') {
@@ -341,8 +341,8 @@ export class Intentions {
         this.#failedActionsQueue.push(action);
         console.log('[FAILED ACTION] Recorded: ', this.#failedActionsQueue);
         // Si 3 échecs identiques consécutifs, retourne vrai puis clear l'array
-        if (this.#failedActionsQueue.length >= 3) {
-            const lastThree = this.#failedActionsQueue.slice(-3);
+        if (this.#failedActionsQueue.length >= 2) {
+            const lastThree = this.#failedActionsQueue.slice(-2);
             if (lastThree.every(a => a === action)) {
                 this.#failedActionsQueue = []; // Clear l'array
                 return true; // Déclenche replanification
@@ -495,12 +495,12 @@ export class Intentions {
             // When parcel is NEAREST
             const currentDist = this.#getIntentionDistance(
                 this.#currentObjective,
-                this.#beliefs.getPlayerPosition()
+                this.#beliefs.getMyPosition()
             );
             const betterParcel = delta.newParcels.some(p =>
             {
-                const d = Math.abs(this.#beliefs.getPlayerPosition().x - p.x)
-                        + Math.abs(this.#beliefs.getPlayerPosition().y - p.y);
+                const d = Math.abs(this.#beliefs.getMyPosition().x - p.x)
+                        + Math.abs(this.#beliefs.getMyPosition().y - p.y);
                 return d < currentDist * 1;
             });
             if (betterParcel)
@@ -520,7 +520,7 @@ export class Intentions {
                 return true;
             }
             // Reconsider if a parcel pop-up
-            const playerPos = this.#beliefs.getPlayerPosition();
+            const playerPos = this.#beliefs.getMyPosition();
             const closeParcel = delta.newParcels.some(p => {
                 const dist = Math.abs(playerPos.x - p.x) + Math.abs(playerPos.y - p.y);
                 return dist <= 5; // Seuil de distance (ex: 2 tiles)
@@ -561,7 +561,7 @@ export class Intentions {
         const type  = parts[0];
         const x     = parseInt(parts[1]);
         const y     = parseInt(parts[2]);
-        const pos   = this.#beliefs.getPlayerPosition();
+        const pos   = this.#beliefs.getMyPosition();
 
         if (type === 'pickup')
         {
@@ -573,7 +573,7 @@ export class Intentions {
         if (type === 'deliver')
         {
             // success: agent is on a delivery parcel AND carry no parcel anymore
-            const pos = this.#beliefs.getPlayerPosition();
+            const pos = this.#beliefs.getMyPosition();
             const tile = this.#beliefs.getTiles().find(
                 t => t.x === Math.round(pos.x) && t.y === Math.round(pos.y)
             );

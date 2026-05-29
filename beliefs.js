@@ -13,7 +13,7 @@
 /*******************************************************************************/
 export class Beliefs {
     /** @type {{ x: number, y: number }} */
-    #playerPosition = { x: 0, y: 0 };
+    #myPosition = { x: 0, y: 0 };
 
     /** @type {Set<{ id: string }>} */
     #carriedParcel = new Set();
@@ -36,7 +36,7 @@ export class Beliefs {
     /** @type {Array<{ x: number, y: number, type: string }>} */
     #tiles = [];
 
-     /** @type {Set<{x: number, y: number}>} Dynamic obstacles to avoid */
+     /** @type {Set<string>} type x_y, Dynamic obstacles to avoid */
     blockedTiles = new Set();
 
     /** @type {number} */
@@ -49,7 +49,13 @@ export class Beliefs {
     #visionRange = 0;
 
     /** @type {string|null} */
-    #myAgentId = null;
+    #myId = null;
+
+    /** @type {string|null} */
+    #myName = null;
+
+    /** @type {number|null} */
+    #myScore = null;
 
     /** @type {Set<string>} IDs des parcelles connues au sensing précédent */
     #knownParcelIds = new Set();
@@ -75,8 +81,8 @@ export class Beliefs {
      * Getter for player position.
      * @returns {{ x: number, y: number }}
      */
-    getPlayerPosition() {
-        return this.#playerPosition;
+    getMyPosition() {
+        return this.#myPosition;
     }
 
     /**
@@ -163,8 +169,24 @@ export class Beliefs {
      * Gets the agent's ID.
      * @returns {string|null}
      */
-    getAgentId() {
-        return this.#myAgentId;
+    getMyId() {
+        return this.#myId;
+    }
+
+    /**
+     * Gets the agent's name.
+     * @returns {string|null}
+     */
+    getMyName() {
+        return this.#myName;
+    }
+
+    /**
+     * Gets the agent's score.
+     * @returns {number|null}
+     */
+    getMyScore() {
+        return this.#myScore;
     }
 
     // ****************************************************************************
@@ -177,7 +199,7 @@ export class Beliefs {
      * @param {number} y
      */
     updatePlayerPosition(x, y) {
-        this.#playerPosition = { x, y };
+        this.#myPosition = { x, y };
     }
 
     /**
@@ -250,8 +272,8 @@ export class Beliefs {
         this.#knownAgentIds = currentAgentIds;
 
         // ── Update carried parcels, server given
-        if (this.#myAgentId) {
-            const carriedByMe = parcels.filter(p => p.carriedBy === this.#myAgentId);
+        if (this.#myId) {
+            const carriedByMe = parcels.filter(p => p.carriedBy === this.#myId);
             this.#carriedParcel = new Set(carriedByMe.map(p => ({ id: p.id })));
         }
 
@@ -314,7 +336,7 @@ export class Beliefs {
             .map(t => ({
                 x: t.x,
                 y: t.y,
-                distance: Math.abs(this.#playerPosition.x - t.x) + Math.abs(this.#playerPosition.y - t.y)
+                distance: Math.abs(this.#myPosition.x - t.x) + Math.abs(this.#myPosition.y - t.y)
             }));
         console.log(`[MAP] Delivery points found: ${this.#deliveryPoint.length}`);
     }
@@ -376,7 +398,33 @@ export class Beliefs {
      * @param {string} agentId
      */
     setMyId(agentId) {
-        this.#myAgentId = agentId;
+        this.#myId = agentId;
+    }
+
+    /**
+     * Sets the agent's name.
+     * @param {string} name
+     */
+    setMyName(name) {
+        this.#myName = name;
+    }
+
+    /**
+     * Sets the agent's score.
+     * @param {number} score
+     */
+    setMyScore(score) {
+        this.#myScore = score;
+    }
+
+    /** Set new blockedTile to the set blockedTile
+     * @param {number} x
+     * @param {number} y
+     */
+    addBlockedTile(x, y)
+    {
+        const key = `${(x)}_${(y)}`;
+        this.blockedTiles.add(key);
     }
 
     /**
