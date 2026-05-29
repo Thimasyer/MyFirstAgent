@@ -25,15 +25,14 @@ import 'dotenv/config';
 import { Beliefs } from './beliefs.js';
 import { Desires } from './desires.js';
 import { Intentions } from './intentions.js';
+import { registerTool, runAgentTurn } from './use_LLM.js';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
 const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
 
-/** Hard-coded map dimensions for probability calculations. */
-const MAX_TIME_HORIZON = 5; // Number of moves ahead to predict
-const MAX_AGENTS = 50; // Maximum number of agents to track
+
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +42,8 @@ const myIntentions = new Intentions(myDesires, myBeliefs, generatePathTo);
 myDesires.setLinkedIntentions(myIntentions); // create circular reference for dynamic updates
 /** @type {boolean} Guard to prevent concurrent action execution */
 let isExecuting = false;
+/** @type {boolean} Guard to prevent concurrent core_loop */
+let isCoreLoopRunning = false;
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 const HEARTBEAT_DELAY_MS = 500;
@@ -97,6 +98,22 @@ socket.on('you', (me) => {
 })
 
 
+socket.onMsg( async (id, name, msg, reply) => {
+    // ensure onYou was already executed
+    if (myBeliefs.getMyId()) 
+    {
+        console.log("new msg received from", name+':', msg);
+        // const myname = (await socket.me).name;
+        if (reply) {
+            let answer = 'hello '+name+', this is the reply. Do you need anything?';
+            console.log("my reply: ", answer);
+            try { reply(answer) } catch { (/** @type {Error} */ error) => console.error(error) }
+        }
+    }
+});
+
+
+
 /**
  * Updates visible parcels and agents from sensing data.
  * Then, uses BDI model: generate desires, convert to intentions, filter to create optimal plan.
@@ -124,11 +141,21 @@ socket.onSensing(async (data) => {
     // delta {newParcels, goneParcelIds, newAgents, goneAgentIds} used for reconsidering 
     const delta = myBeliefs.updatePercepts(parcels, agents);
     if (Object.values(delta).some(arr => arr.length > 0)) {
-        console.log('Delta:', delta);
+        //console.log('Delta:', delta);
     }
     // ***************** CORE OF BDI LOOP  ********************************
-    await core_loop(delta);
-    
+    if(!isCoreLoopRunning) // prevent guard
+    { 
+        isCoreLoopRunning = true;
+        try 
+        {
+            await core_loop(delta);
+        }
+        finally 
+        {
+            isCoreLoopRunning = false;
+        }
+    }
     
 });
 
@@ -168,6 +195,7 @@ socket.on('map', (height, width, tiles) => {
  */
 async function core_loop(delta)
 {
+    //console.log('ENTER CORE_LOPP');
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) 
@@ -175,7 +203,9 @@ async function core_loop(delta)
         myDesires.genOption();
         myIntentions.desiresToIntention();
         myIntentions.filterIntention();
-        myIntentions.setPlan();
+        myIntentions.setPlan(myBeliefs.blockedTiles);
+    } else {
+        //console.log('[CORE_LOOP] plan not empty');
     }
     
 
@@ -189,7 +219,7 @@ async function core_loop(delta)
     if (shouldContinue)
     {
         // ******** Line 11+12 Execute action ****************
-        // guard, for preventing launching several action in parallel
+        // guard, for preventing launching several action in parallel 
         // (onSensing is called every server frame, but executeNextAction take much more time)
         if (!isExecuting)
         {  
@@ -202,13 +232,15 @@ async function core_loop(delta)
             {
                 isExecuting = false;
             }
+        } else {
+            //console.log('[CORE_LOOP] shouldContinue, but isExecuting');
         }
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
         if (myIntentions.reconsider(delta) && !myIntentions.isSmartReplanActive())
         {
-            console.log('[BDI] Reconsidering intention...');
+            //console.log('[BDI] Reconsidering intention...');
             myDesires.genOption();
             myIntentions.desiresToIntention();
             myIntentions.filterIntention();
@@ -218,13 +250,14 @@ async function core_loop(delta)
         // replan if plan invalide
         if (!myIntentions.isPlanValid() && !myIntentions.isSmartReplanActive())
         {
-            console.log('[BDI] Plan invalid or empty, replanning...');
+            //console.log('[BDI] Plan invalid or empty, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)
             {
                 myIntentions.setPlan();
             }
         }
     }
+    //console.log('EXIT CORE_LOPP');
 }
 
 // ****************************************************************************
@@ -235,10 +268,9 @@ async function core_loop(delta)
  * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0) and dynamic obstacles
  * @param {{x: number, y: number}} start
  * @param {{x: number, y: number}} goal
- * @param {Array<{x: number, y: number}>} blockedPositions - Dynamic obstacles to avoid
  * @returns {Array<string>} List of move actions (move_up, move_down, move_left, move_right)
  */
-function generatePathTo(start, goal, blockedPositions = []) {
+function generatePathTo(start, goal) {
     const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
     const goalPos = { x: Math.round(goal.x), y: Math.round(goal.y) };
 
@@ -255,14 +287,18 @@ function generatePathTo(start, goal, blockedPositions = []) {
         }
     });
 
-    // Mark dynamic obstacles as non-walkable
-    blockedPositions.forEach(pos => {
-        if (pos.x >= 0 && pos.x < myBeliefs.getMapWidth() &&
-            pos.y >= 0 && pos.y < myBeliefs.getMapHeight()) {
-            walkable[pos.x][pos.y] = false;
-        }
-    });
-
+     // Mark dynamic obstacles as non-walkable
+    if (myBeliefs.blockedTiles.size > 0)
+    {
+        myBeliefs.blockedTiles.forEach(pos => {
+            const [x, y] = pos.split('_').map(Number); // Convertit 'x,y' en {x, y}
+            if (x >= 0 && x < myBeliefs.getMapWidth() &&
+                y >= 0 && y < myBeliefs.getMapHeight()) {
+                walkable[x][y] = false;
+            }
+        });
+    }
+    
     // A* algorithm
     const openSet = new Set();
     const closedSet = new Set();
@@ -373,42 +409,6 @@ function reconstructPath(cameFrom, current) {
     return path;
 }
 
-// Attention: don't take care about non-walkable tiles 
-/**
- * Generates a simple path from start to goal, avoiding obstacles
- * @param {{x: number, y: number}} start
- * @param {{x: number, y: number}} goal
- * @returns {Array<string>} List of actions.
- */
-function generatePathTo_blind(start, goal) {
-    const actions = [];
-    let current = { x: Math.round(start.x), y: Math.round(start.y) };
-    const target = { x: Math.round(goal.x), y: Math.round(goal.y) };
-
-    // Move horizontally
-    while (current.x !== target.x) {
-        if (current.x < target.x) {
-            actions.push('move_right');
-            current.x++;
-        } else {
-            actions.push('move_left');
-            current.x--;
-        }
-    }
-
-    // Move vertically
-    while (current.y !== target.y) {
-        if (current.y < target.y) {
-            actions.push('move_up');
-            current.y++;
-        } else {
-            actions.push('move_down');
-            current.y--;
-        }
-    }
-
-    return actions;
-}
 
 /**
  * Executes the next action in the intentions plan.
@@ -442,7 +442,8 @@ async function executeNextAction()
             // When the last action of plan is executed shift intention
             if (myIntentions.getPlan().length === 1) {
                 myIntentions.shiftIntention();
-
+                myBeliefs.blockedTiles.clear();
+                console.log('[EXECUTENEXTACTION] blockedTiles cleared')
             }
             console.log(`[ACTION] Moved ${direction}.`);
             myIntentions.getNextAction(); // shift only on success
@@ -455,31 +456,23 @@ async function executeNextAction()
             // after 3 failed action, replan  with blocked tiles
             if(myIntentions.recordFailedAction(action))
             {
-                console.log('[FAILED ACTION] 3 action recorded')
-                //myIntentions.clearFailedActionsQueue();
+                console.log('[FAILED ACTION] 2 action recorded')
                 // get the blocked tiles
-                let newBlockedTile = {x: 0, y:0}
-                switch (action) {
-                    case 'move_up':
-                        newBlockedTile.x = myBeliefs.getPlayerPosition().x;
-                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y+1;
-                        break;
-                    case 'move_down':
-                        newBlockedTile.x = myBeliefs.getPlayerPosition().x;
-                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y-1;
-                        break;
-                    case 'move_right':
-                        newBlockedTile.x = myBeliefs.getPlayerPosition().x+1;
-                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
-                        break;
-                    case 'move_left':
-                        newBlockedTile.x = myBeliefs.getPlayerPosition().x-1;
-                        newBlockedTile.y =  myBeliefs.getPlayerPosition().y;
+                let x = myBeliefs.getMyPosition().x;
+                let y = myBeliefs.getMyPosition().y;
+
+                switch (action)
+                {
+                    case 'move_up':    y += 1; break;
+                    case 'move_down':  y -= 1; break;
+                    case 'move_right': x += 1; break;
+                    case 'move_left':  x -= 1; break;
                 }
-                console.log('[PLAYER POS] ', myBeliefs.getPlayerPosition());
-                myBeliefs.blockedTiles.add(newBlockedTile);
-                console.log('[ACTION FAILED]: blocekdTiles', myBeliefs.blockedTiles);
-                myIntentions.setPlan(myBeliefs.blockedTiles);
+
+                console.log('[PLAYER POS] ', myBeliefs.getMyPosition());
+                myBeliefs.addBlockedTile(x, y);
+                console.log('[ACTION FAILED]: blockedTiles', myBeliefs.blockedTiles);
+                myIntentions.setPlan();
             }
           
         }
@@ -527,4 +520,134 @@ async function executeNextAction()
             myIntentions.clearPlan();
         }
     }
+    console.log('[ACTION] living executeNexAction');
 }
+
+
+// ************************************************************************
+// LLM Chat Listener
+// ************************************************************************
+
+console.log("BDI Agent with LLM: listening to DeliverooJS chat messages.");
+
+socket.onMsg(async (id, name, msg) =>
+{
+    console.log("=== MESSAGE FROM DELIVEROOJS CHAT ===");
+    console.log(`From: ${name} (${id})`);
+    console.log(`Message: ${msg}`);
+
+    // Appel non-bloquant au LLM (ne bloque pas onSensing ou core_loop)
+    const response = await runAgentTurn(msg);
+    console.log(`LLM Response: ${response}`);
+
+    // Optionnel: Envoyer une réponse dans le chat DeliverooJS
+    await socket.emitSay(id, { reply: response });
+});
+
+
+
+// ==========================================
+// LLM Tools Integration
+// ==========================================
+
+// Register tools for the LLM
+registerTool("calculate", (strExpression) =>
+{
+    try
+    {
+        // Demo only: eval is unsafe for production
+        return String(eval(strExpression));
+    }
+    catch (error)
+    {
+        return `Error: ${error.message}`;
+    }
+});
+
+registerTool("get_current_time", (strLocation) =>
+{
+    try
+    {
+        const normalized = strLocation.trim().toLowerCase();
+        const supportedLocations =
+        {
+            rome: { city: "Rome", timeZone: "Europe/Rome" },
+            roma: { city: "Rome", timeZone: "Europe/Rome" },
+        };
+
+        const config = supportedLocations[normalized];
+
+        if (!config)
+        {
+            return "Error: Current time is only supported for Rome/Roma in this demo.";
+        }
+
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat("en-GB",
+        {
+            timeZone: config.timeZone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+        });
+
+        const parts = formatter.formatToParts(now);
+        const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+
+        const formattedDate = `${map.year}-${map.month}-${map.day}`;
+        const formattedTime = `${map.hour}:${map.minute}:${map.second}`;
+
+        return `The current local time in ${config.city} is ${formattedDate} ${formattedTime} (${config.timeZone}).`;
+    }
+    catch (error)
+    {
+        return `Error: ${error.message}`;
+    }
+});
+
+registerTool("get_my_position", () =>
+{
+    const pos = myBeliefs.getMyPosition();
+    if (!pos)
+    {
+        return "Error: agent position is not available yet.";
+    }
+
+    return JSON.stringify(
+    {
+        id: myBeliefs.getMyId(),
+        name: myBeliefs.getMyName(),
+        x: myBeliefs.getMyPosition().x,
+        y: myBeliefs.getMyPosition().y,
+        score: myBeliefs.getMyScore(),
+    });
+});
+
+registerTool("move", async (strDirection) =>
+{
+    const normalized = strDirection.trim().toLowerCase();
+    const validDirections = ["up", "down", "left", "right"];
+
+    if (!validDirections.includes(normalized))
+    {
+        return `Error: invalid direction '${strDirection}'. Valid directions are: up, down, left, right.`;
+    }
+
+    try
+    {
+        const result = await socket.emitMove(normalized);
+        if (result)
+        {
+            return `Successfully moved ${normalized}. New position: ${JSON.stringify(result)}.`;
+        }
+        return `Error: failed to move ${normalized}.`;
+    }
+    catch (error)
+    {
+        return `Error: moving ${normalized} failed: ${error.message}`;
+    }
+});
