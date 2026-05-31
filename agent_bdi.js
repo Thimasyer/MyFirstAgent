@@ -8,10 +8,7 @@
 // Include:       beliefs.js, desires.js, intentions.js       
 // 
 // TODO 1:    prendre un spritz
-// TODO 2:    - Prendre en compte la position des joueurs dans reconsider.
-//            - Que faire si l'agent n'arrive pas à réaliser une action? 
-//              => Mémoire des actions échoué, puis refaire un plan sans l'action inachevable
-//            - Rajouter les tiles fléchés à la logique
+// TODO 2:    - Rajouter les tiles fléchés à la logique
 //            - Rajouter les crate (boite jaune) à la logique
 //            - Faire parler l'agent
 
@@ -25,7 +22,14 @@ import 'dotenv/config';
 import { Beliefs } from './beliefs.js';
 import { Desires } from './desires.js';
 import { Intentions } from './intentions.js';
-import { registerTool, runAgentTurn } from './use_LLM.js';
+import { registerTool, runAgentTurn } from "./use_LLM.js";
+import { calculate, get_current_time, get_me_info, move } from "./tools_LLM.js";
+
+// Enregistrement des outils
+registerTool("calculate", calculate);
+registerTool("get_current_time", get_current_time);
+registerTool("get_me_info", get_me_info);
+registerTool("move", move);
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -544,110 +548,4 @@ socket.onMsg(async (id, name, msg) =>
     await socket.emitSay(id, { reply: response });
 });
 
-
-
-// ==========================================
-// LLM Tools Integration
-// ==========================================
-
-// Register tools for the LLM
-registerTool("calculate", (strExpression) =>
-{
-    try
-    {
-        // Demo only: eval is unsafe for production
-        return String(eval(strExpression));
-    }
-    catch (error)
-    {
-        return `Error: ${error.message}`;
-    }
-});
-
-registerTool("get_current_time", (strLocation) =>
-{
-    try
-    {
-        const normalized = strLocation.trim().toLowerCase();
-        const supportedLocations =
-        {
-            rome: { city: "Rome", timeZone: "Europe/Rome" },
-            roma: { city: "Rome", timeZone: "Europe/Rome" },
-        };
-
-        const config = supportedLocations[normalized];
-
-        if (!config)
-        {
-            return "Error: Current time is only supported for Rome/Roma in this demo.";
-        }
-
-        const now = new Date();
-        const formatter = new Intl.DateTimeFormat("en-GB",
-        {
-            timeZone: config.timeZone,
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: false,
-        });
-
-        const parts = formatter.formatToParts(now);
-        const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-
-        const formattedDate = `${map.year}-${map.month}-${map.day}`;
-        const formattedTime = `${map.hour}:${map.minute}:${map.second}`;
-
-        return `The current local time in ${config.city} is ${formattedDate} ${formattedTime} (${config.timeZone}).`;
-    }
-    catch (error)
-    {
-        return `Error: ${error.message}`;
-    }
-});
-
-registerTool("get_my_position", () =>
-{
-    const pos = myBeliefs.getMyPosition();
-    if (!pos)
-    {
-        return "Error: agent position is not available yet.";
-    }
-
-    return JSON.stringify(
-    {
-        id: myBeliefs.getMyId(),
-        name: myBeliefs.getMyName(),
-        x: myBeliefs.getMyPosition().x,
-        y: myBeliefs.getMyPosition().y,
-        score: myBeliefs.getMyScore(),
-    });
-});
-
-registerTool("move", async (strDirection) =>
-{
-    const normalized = strDirection.trim().toLowerCase();
-    const validDirections = ["up", "down", "left", "right"];
-
-    if (!validDirections.includes(normalized))
-    {
-        return `Error: invalid direction '${strDirection}'. Valid directions are: up, down, left, right.`;
-    }
-
-    try
-    {
-        const result = await socket.emitMove(normalized);
-        if (result)
-        {
-            return `Successfully moved ${normalized}. New position: ${JSON.stringify(result)}.`;
-        }
-        return `Error: failed to move ${normalized}.`;
-    }
-    catch (error)
-    {
-        return `Error: moving ${normalized} failed: ${error.message}`;
-    }
-});
+export { myBeliefs, myIntentions, socket, registerTool };

@@ -51,7 +51,7 @@ function registerTool(strName, funcTool)
 }
 
  // ==========================================
- // 3. LLM Call
+ // 3. Reusable LLM Call
  // ==========================================
 
 /**
@@ -119,7 +119,7 @@ You are an AI agent connected to a DeliverooJS environment.
 Available tools:
 - calculate(expression): evaluates a mathematical expression
 - get_current_time(location): returns the current local time for Rome/Roma
-- get_my_position(): returns the agent's current x, y coordinates and score
+- get_me_info(): returns the agent's id, name, current x, y coordinates and score
 - move(direction): moves the agent one step in one direction: up, down, left, or right
 
 Movement rules:
