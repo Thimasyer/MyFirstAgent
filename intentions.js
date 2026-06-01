@@ -12,6 +12,8 @@
 // TODO: Améliorer la fonction filterIntention pour rammaser des parcels pas loin du chemin
 //         -> utiliser les helpers déjà en place, l'idée est d'attribuer un score à chaque intention.
 
+import { myBeliefs } from './agent_bdi.js';
+
 /*******************************************************************************/
 export class Intentions {
     /** @type {Array<string>} */
@@ -19,6 +21,9 @@ export class Intentions {
 
     /** @type {Array<string>} */
     #filteredIntentions = [];
+
+    // /** @type {Array<{intention: string, score: number}>} */
+    // #scoredIntentions = []
 
     /** @type {Array<string>} */
     #nonFilteredIntentions = [];
@@ -58,6 +63,10 @@ export class Intentions {
         this.#generatePathTo = generatePathTo;
     }
 
+    /**  @param {string} impossibleIntentions - The list of impossible intentions. */
+    setCurrentImpossibleIntentions(impossibleIntentions) {
+        this.#currentImpossibleIntentions.add(impossibleIntentions);
+    }
     /**
      * Checks if smartReplan is currently active
      * @returns {boolean}
@@ -113,17 +122,17 @@ export class Intentions {
             if (desire.startsWith('pickup_')) {
                 this.#nonFilteredIntentions.push(desire);
 
-            } else if (desire.startsWith('deliver_') && this.#beliefs.getCarriedParcels().size > 0) {
+            } else if (desire.startsWith('deliver_') && this.#beliefs.getCarriedParcels().length > 0) {
                 // deliver only when player carried parcel
                 this.#nonFilteredIntentions.push(desire);
                 
-            } else if (desire.startsWith('explore_') && this.#beliefs.getCarriedParcels().size === 0) {
+            } else if (desire.startsWith('explore_') && this.#beliefs.getCarriedParcels().length === 0) {
                 this.#nonFilteredIntentions.push(desire);
             }
         }
         // log only if intention changed
         if (JSON.stringify(oldIntentions) !== JSON.stringify(this.#nonFilteredIntentions)) {
-            //console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
+            console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
         }  
     }
 
@@ -267,7 +276,7 @@ export class Intentions {
 
     /**
      * Calculates reel distance to an objective, base on generatePathTo (algo A*)
-     * @param {string} intentions - Objective string (e.g., "pickup_5_3")
+     * @param {string} intentions - Intention string (e.g., "pickup_5_3")
      * @param {{x: number, y: number}} playerPosition - Current player position for distance calculation
      * @returns {number} - Distance in steps
      */
@@ -295,7 +304,6 @@ export class Intentions {
             }
         }
 
-
         const objective = this.#filteredIntentions[0];
 
         // When there is no intention, clear the plan
@@ -320,16 +328,12 @@ export class Intentions {
 
         // Add action at destination
         if (type === 'pickup') {
-            path.push(objective);
+            path.push('pickup');
         } else if (type === 'deliver') {
             path.push('putdown');
         }
         // No action needed for explore, just reach the location
-
         this.#plan = path;
-        console.log(`[PLAN] New plan set for objective "${objective}":
-             ${path.length} actions; filteredIntention remaining ${this.#filteredIntentions.length}`);
-        console.log('[PLAN IS]', this.#plan)
     }
 
     /**
@@ -409,10 +413,61 @@ export class Intentions {
 
     /**
      * Gets the current objective.
-     * @returns {string|null}
+     * @returns {string}
      */
     getCurrentObjective() {
         return this.#currentObjective;
+    }
+
+    /** @return {number|null} */
+    getScoreOfCurrentObjective() {
+        if (!this.#currentObjective) return null;
+
+        const parts  = this.#currentObjective.split('_');
+        const type   = parts[0];
+        const obj_x  = parseInt(parts[1]);
+        const obj_y  = parseInt(parts[2]);
+        if (type === 'explore')
+        {
+            return 0;
+        } 
+        // Supposing the agent move from 10 tiles in 3 seconds
+        // Supposing the agent pickup all the visible parcels
+        // We estimate the reward, based on distance and time to achieve the pickup and deliver
+        else if (type === 'pickup')
+        {
+            const dist_obj = this.#plan.length;
+            const next_deliver = this.#findClosestIntention(
+                Array.from(this.#desires.getDesires()).filter(d => d.startsWith('deliver_')),
+                {x: obj_x, y: obj_y}
+            );
+
+            if (!next_deliver) {
+                console.log('[SCORE] No deliver found');
+                return 0;
+            }
+            const dist_deliver = this.#getIntentionDistance(next_deliver, {x: obj_x, y: obj_y});
+            console.log(`[SCORE] dist_obj: ${dist_obj}, dist_deliver: ${dist_deliver}`);
+            const parcelReward = this.#beliefs.getVisibleParcels().find(p => p.x === obj_x && p.y === obj_y)?.reward ?? 0;
+            console.log(`[SCORE] parcelReward: ${parcelReward}`);
+            // parcel deacreasing from 1 point every seconds
+            const possibleReward = parcelReward - (dist_deliver + dist_obj) * 3/10; // walking 10 tiles in 3 seconds, so 0.3 point every tile
+            console.log(`[SCORE] possibleReward: ${possibleReward}`);
+            return possibleReward;
+        }
+        else if (type === 'deliver')
+        {
+            const dist_deliver = this.#plan.length;
+            const carriedParcels = this.#beliefs.getCarriedParcels();
+            let totalReward = 0;
+            carriedParcels.forEach(p => {
+                totalReward += p.reward;
+            });
+            console.log(`[SCORE] totalReward: ${totalReward}`);
+            // walking 10 tiles in 3 seconds, so 0.3 point every tile
+            return totalReward - dist_deliver * 3/10; 
+        }
+
     }
 
     /**
@@ -431,6 +486,11 @@ export class Intentions {
     /** @returns {Set<string>} */ 
     getVisitedSpawnPoints() {
         return this.#visitedSpawnPoints;
+    }
+
+    /** @returns {Set<string>} */
+    getCurrentImpossibleIntentions() {
+        return this.#currentImpossibleIntentions;
     }
 
     /**
@@ -465,7 +525,7 @@ export class Intentions {
      */
     reconsider(delta = { newParcels: [], goneParcelIds: [], newAgents: [], goneAgentIds: [] }) {
         // No objective: always reconsider
-        if (!this.#currentObjective) return true;
+        if (!this.#currentObjective || this.#currentImpossibleIntentions.has(this.#currentObjective)) return true;
 
         const parts  = this.#currentObjective.split('_');
         const type   = parts[0];

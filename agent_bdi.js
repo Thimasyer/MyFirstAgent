@@ -35,7 +35,7 @@ registerTool("move", move);
 
 const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
-
+const DEBUG = process.env.DEBUG;
 
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -199,17 +199,21 @@ socket.on('map', (height, width, tiles) => {
  */
 async function core_loop(delta)
 {
-    //console.log('ENTER CORE_LOPP');
+    if (DEBUG) console.log('[CORE_LOOP] ENTER *********************** ');
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) 
     {
         myDesires.genOption();
+        if (DEBUG) console.log('[DESIRES] Generated desires:', myDesires.getDesires());
         myIntentions.desiresToIntention();
         myIntentions.filterIntention();
-        myIntentions.setPlan(myBeliefs.blockedTiles);
+        if (DEBUG) console.log('[INTENTIONS] Generated intentions:', myIntentions.getFilteredIntentions());
+        myIntentions.setPlan();
+        if (DEBUG) console.log('[PLAN] Generated plan:', myIntentions.getPlan());
+        if (DEBUG) console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
     } else {
-        //console.log('[CORE_LOOP] plan not empty');
+        if (DEBUG) console.log('[PLAN] Existing plan:', myIntentions.getPlan());
     }
     
 
@@ -219,6 +223,8 @@ async function core_loop(delta)
        myIntentions.getPlan().length > 0  // not empty(π)
     && !myIntentions.succeeded()          // not succeeded(I, B)
     && !myIntentions.impossible();        // not impossible(I, B)
+
+    console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
 
     if (shouldContinue)
     {
@@ -242,9 +248,10 @@ async function core_loop(delta)
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
+        if (DEBUG) console.log('[RECONSIDER] Checking if reconsideration is needed with delta:', delta);
         if (myIntentions.reconsider(delta) && !myIntentions.isSmartReplanActive())
         {
-            //console.log('[BDI] Reconsidering intention...');
+            if (DEBUG) console.log('[RECONSIDER] Triggered reconsideration based on delta:', delta);
             myDesires.genOption();
             myIntentions.desiresToIntention();
             myIntentions.filterIntention();
@@ -254,14 +261,17 @@ async function core_loop(delta)
         // replan if plan invalide
         if (!myIntentions.isPlanValid() && !myIntentions.isSmartReplanActive())
         {
-            //console.log('[BDI] Plan invalid or empty, replanning...');
+            if (DEBUG) console.log('[REPLAN] Plan invalid or empty, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)
             {
                 myIntentions.setPlan();
             }
         }
     }
-    //console.log('EXIT CORE_LOPP');
+    else {
+        if (DEBUG) console.log('[ShouldNotContinue] Plan empty, succeded or impossible');
+    }
+    if (DEBUG) console.log('[CORE_LOOP] EXIT *********************** ');
 }
 
 // ****************************************************************************
@@ -295,7 +305,7 @@ function generatePathTo(start, goal) {
     if (myBeliefs.blockedTiles.size > 0)
     {
         myBeliefs.blockedTiles.forEach(pos => {
-            const [x, y] = pos.split('_').map(Number); // Convertit 'x,y' en {x, y}
+            const [x, y] = pos.split('_').map(Number); // Convertit 'x_y' en {x, y}
             if (x >= 0 && x < myBeliefs.getMapWidth() &&
                 y >= 0 && y < myBeliefs.getMapHeight()) {
                 walkable[x][y] = false;
@@ -380,7 +390,9 @@ function generatePathTo(start, goal) {
     }
 
     // No path found
-    console.log(`[PATHFINDING] Bloqué : aucun chemin valide vers (${goalPos.x},${goalPos.y})`);
+    console.log(`[PATHFINDING] CurrentIntention impossible : aucun chemin valide vers (${goalPos.x},${goalPos.y})`);
+    myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
+    myIntentions.clearPlan(); // clear plan to trigger re-planning
     return [];
 }
 
@@ -483,7 +495,7 @@ async function executeNextAction()
     }
 
     // ── PICKUP ────────────────────────────────────────────────
-    else if (action.startsWith('pickup_'))
+    else if (action === 'pickup')
     {
         const picked = await socket.emitPickup();
 
@@ -510,7 +522,7 @@ async function executeNextAction()
 
         if (putDown && putDown.length > 0)
         {
-            myBeliefs.getCarriedParcels().clear();
+            myBeliefs.clearCarriedParcels();
             for (const p of putDown)
             {
                 console.log(`[ACTION] Put down parcel ${p.id}.`);

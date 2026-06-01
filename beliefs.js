@@ -15,8 +15,8 @@ export class Beliefs {
     /** @type {{ x: number, y: number }} */
     #myPosition = { x: 0, y: 0 };
 
-    /** @type {Set<{ id: string }>} */
-    #carriedParcel = new Set();
+    /** @type {Array<{ id: string, reward: number }>} */
+    #carriedParcel = [];
 
     /** @type {Array<{ id: string, x: number, y: number, carriedBy: string, reward: number }>} */
     #visibleParcels = [];
@@ -87,7 +87,7 @@ export class Beliefs {
 
     /**
      * Getter for carried parcels.
-     * @returns {Set<{ id: string }>}
+     * @returns {Array<{ id: string, reward: number }>}
      */
     getCarriedParcels() {
         return this.#carriedParcel;
@@ -207,7 +207,13 @@ export class Beliefs {
      * @param {string} parcelID
      */
     addCarriedParcel(parcelID) {
-        this.#carriedParcel.add({ id: parcelID });
+        this.#carriedParcel.push({ id: parcelID, 
+            reward: this.#visibleParcels.find(p => p.id === parcelID)?.reward ?? 0 });
+    }
+
+    /** Clear CarreidParcels   */
+    clearCarriedParcels() {
+        this.#carriedParcel = [];
     }
 
     /**
@@ -274,7 +280,7 @@ export class Beliefs {
         // ── Update carried parcels, server given
         if (this.#myId) {
             const carriedByMe = parcels.filter(p => p.carriedBy === this.#myId);
-            this.#carriedParcel = new Set(carriedByMe.map(p => ({ id: p.id })));
+            this.#carriedParcel = carriedByMe.map(p => ({ id: p.id, reward: p.reward }));
         }
 
         // ── Update beliefs ─────────────────────────────────────────

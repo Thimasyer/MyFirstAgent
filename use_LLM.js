@@ -32,6 +32,7 @@ const client = new OpenAI(
 
  // ==========================================
  // 2. Tool Registry
+ // use registerTool in tools_LLM.js for more modularity
  // ==========================================
 
 /**
@@ -203,13 +204,11 @@ async function runAgentTurn(strUserInput, nbrMaxIterations = 12)
         { temperature: 0 });
 
         console.log(`Assistant: ${assistantMessage}\n`);
-
         const parsedAction = extractAction(assistantMessage);
 
         if (parsedAction)
         {
             const { action, actionInput } = parsedAction;
-
             let strObservation;
 
             if (TOOLS[action])
@@ -221,9 +220,7 @@ async function runAgentTurn(strUserInput, nbrMaxIterations = 12)
             {
                 strObservation = `Error: unknown tool '${action}'. Available tools: ${Object.keys(TOOLS).join(", ")}`;
             }
-
             console.log(`[Observation: ${strObservation}]\n`);
-
             turnMessages.push(
             {
                 role: "assistant",
@@ -240,11 +237,9 @@ async function runAgentTurn(strUserInput, nbrMaxIterations = 12)
         }
 
         const finalAnswer = extractFinalAnswer(assistantMessage);
-
         if (finalAnswer)
         {
             console.log(`Assistant: ${finalAnswer}\n`);
-
             messages.push(
             {
                 role: "user",
@@ -261,9 +256,7 @@ async function runAgentTurn(strUserInput, nbrMaxIterations = 12)
         }
 
         const observation = "Error: invalid format. You must output either one Action or one Final Answer.";
-
         console.log(`[Observation: ${observation}]\n`);
-
         turnMessages.push(
         {
             role: "user",
@@ -272,9 +265,7 @@ async function runAgentTurn(strUserInput, nbrMaxIterations = 12)
     }
 
     const fallbackAnswer = "I could not complete the request within the maximum number of iterations.";
-
     console.log(`Assistant: ${fallbackAnswer}\n`);
-
     messages.push(
     {
         role: "user",
