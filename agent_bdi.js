@@ -7,10 +7,12 @@
 //                - Intentions: Agent's selected plans to achieve desires
 // Include:       beliefs.js, desires.js, intentions.js       
 // 
-// TODO 1:    prendre un spritz
+// TODO 1:     prendre une glace
 // TODO 2:    - Rajouter les tiles fléchés à la logique
 //            - Rajouter les crate (boite jaune) à la logique
-//            - Faire parler l'agent
+//            1. Vérifier l'implémentation de la fonction getScoreOfCurrentObjective()
+//            2. Terminer la révision d'intention: quand clear currentImpossibleIntention
+//            3. Etendre le AGENT_PROMPT dans use_LLM.js pour ajouter des outils.
 
 //
 // TODO 3:    Where do we have to updateProbabilityMap()? 
