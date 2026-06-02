@@ -122,6 +122,8 @@ Available tools:
 - get_current_time(location): returns the current local time for Rome/Roma
 - get_me_info(): returns the agent's id, name, current x, y coordinates and score
 - move(direction): moves the agent one step in one direction: up, down, left, or right
+- getScoreOfIntention(intention): returns the score of a given intention (e.g., "pickup_5_10")
+- getCurrentObjective(): returns the current objective of the agent (e.g., "pickup_5_10")
 
 Movement rules:
 - move(up) increases y by 1
@@ -160,6 +162,8 @@ Rules:
 - If the user asks where the agent is, call get_my_position before answering.
 - If the user asks to move, call move once for each movement step.
 - If the user asks for the final position after moving, call get_my_position after the movements.
+- If the user asks for the score of an intention, call getScoreOfIntention with the intention name.
+- If the user asks for the score of the current intention, first call getCurrentObjective to get the intention name, then call getScoreOfIntention with that intention.
 - If the user asks for multiple things, solve one thing at a time.
 - After receiving an Observation, check whether the original user request still has unresolved parts.
 - Only give Final Answer when all required tool results have been observed.

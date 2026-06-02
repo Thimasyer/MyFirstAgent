@@ -7,6 +7,7 @@
  *******************************************************************************/
 
 import { myBeliefs, socket } from "./agent_bdi.js";
+import { myIntentions } from "./agent_bdi.js"; // Importez myIntentions
 
 /**
  * Evaluates a mathematical expression.
@@ -125,4 +126,20 @@ export async function move(strDirection)
     {
         return `Error: moving ${normalized} failed: ${error.message}`;
     }
+}
+
+/**
+ * Returns the score of a given intention.
+ * @param {string} strIntention - The intention to evaluate (e.g., "pickup_5_10").
+ * @returns {number|null} Score of the intention.
+ */
+export function getScoreOfIntention(strIntention) {
+    // Call methods of myIntentions
+    return myIntentions.getScoreOfIntention(strIntention);
+}
+
+/** @returns {string} */
+export function getCurrentObjective(){
+    // Call methods of myIntentions
+    return myIntentions.getCurrentObjective();
 }

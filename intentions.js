@@ -12,11 +12,14 @@
 // TODO:      
 
 
-import { myBeliefs } from './agent_bdi.js';
 import { 
+    myBeliefs, 
+    socket,
     DEBUG,
-    TIME_COST_PER_TILE
- } from './agent_bdi.js';
+    TIME_COST_PER_TILE, 
+    myIntentions
+} from './agent_bdi.js';
+
 /*******************************************************************************/
 export class Intentions {
     /** @type {Array<string>} */
@@ -140,7 +143,7 @@ export class Intentions {
         }
         // log only if intention changed
         if (JSON.stringify(oldIntentions) !== JSON.stringify(this.#nonFilteredIntentions)) {
-            console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
+            if (DEBUG) console.log(`[INTENTION] Desire converted in intentions: ${this.#nonFilteredIntentions.join(', ')}`);
         }  
     }
 
@@ -225,6 +228,9 @@ export class Intentions {
                     }
                     else {
                         console.log('[FILTER] All explore possibility was try')
+                        myBeliefs.blockedTiles.clear();
+                        myIntentions.clearCurrentImpossibleIntentions();
+                        myIntentions.clearFailedActionsQueue();
                     }
                 }
             } else {
@@ -233,7 +239,7 @@ export class Intentions {
         }
 
         this.#filteredIntentions = returnIntention;
-        console.log(`[FILTER] Filtered intention: ${this.#filteredIntentions.join(' -> ')}`);
+        if (DEBUG) console.log(`[FILTER] Filtered intention: ${this.#filteredIntentions.join(' -> ')}`);
     }
 
     /**
@@ -351,6 +357,119 @@ export class Intentions {
         // No action needed for explore, just reach the location
         this.#plan = path;
     }
+    
+    /**
+     * Executes the next action in the intentions plan.
+     * Handles movement, pickup, and putdown actions.
+     * Clears plan on failure to trigger re-planning.
+     */
+    async executeNextAction()
+    {
+        if (this.getFilteredIntentions().length) {
+            if (DEBUG) console.log('[EXECUTENEXTECTION]: Filtered intention', this.getFilteredIntentions()) }
+        const action = this.getPlan()[0];
+        if (!action) return;
+
+        // ── MOVE ──────────────────────────────────────────────────
+        if (action.startsWith('move_'))
+        {
+            const direction = action.split('_')[1];
+
+            if (!['up','down','left','right'].includes(direction))
+            {
+                console.log(`[ACTION] Invalid direction: ${direction}`);
+                this.clearPlan();
+                return;
+            }
+
+            
+            const moved = await socket.emitMove(direction);
+
+            if (moved)
+            {
+                // When the last action of plan is executed shift intention
+                if (this.getPlan().length === 1) {
+                    this.shiftIntention();
+                    myBeliefs.blockedTiles.clear();
+                    if (DEBUG) console.log('[EXECUTENEXTACTION] blockedTiles cleared')
+                }
+                if (DEBUG) console.log(`[ACTION] Moved ${direction}.`);
+                this.getNextAction(); // shift only on success
+                
+            }
+            else
+            {
+                if (DEBUG) console.log(`[ACTION] Move ${direction} failed, will retry.`);
+                
+                // after 3 failed action, replan  with blocked tiles
+                if(this.recordFailedAction(action))
+                {
+                    if (DEBUG) console.log('[FAILED ACTION] 3 action recorded')
+                    // get the blocked tiles
+                    let x = myBeliefs.getMyPosition().x;
+                    let y = myBeliefs.getMyPosition().y;
+
+                    switch (action)
+                    {
+                        case 'move_up':    y += 1; break;
+                        case 'move_down':  y -= 1; break;
+                        case 'move_right': x += 1; break;
+                        case 'move_left':  x -= 1; break;
+                    }
+
+                   if (DEBUG) console.log('[PLAYER POS] ', myBeliefs.getMyPosition());
+                    myBeliefs.addBlockedTile(x, y);
+                    if (DEBUG) console.log('[ACTION FAILED]: blockedTiles', myBeliefs.blockedTiles);
+                    this.setPlan();
+                }
+            
+            }
+        }
+
+        // ── PICKUP ────────────────────────────────────────────────
+        else if (action === 'pickup')
+        {
+            const picked = await socket.emitPickup();
+
+            if (picked && picked.length > 0)
+            {
+                for (const p of picked)
+                {
+                    myBeliefs.addCarriedParcel(p.id);
+                    if (DEBUG) console.log(`[ACTION] Picked up parcel ${p.id}.`);
+                }
+                myIntentions.getNextAction(); // shift the pickup action
+            }
+            else
+            {
+                console.log(`[ACTION] Pickup failed.`);
+                myIntentions.clearPlan();
+            }
+        }
+
+        // ── PUTDOWN ───────────────────────────────────────────────
+        else if (action === 'putdown')
+        {
+            const putDown = await socket.emitPutdown();
+
+            if (putDown && putDown.length > 0)
+            {
+                myBeliefs.clearCarriedParcels();
+                for (const p of putDown)
+                {
+                    if (DEBUG) console.log(`[ACTION] Put down parcel ${p.id}.`);
+                }
+                myIntentions.getNextAction(); // shift the putdown action
+                myIntentions.clearPlan();     // intention completed
+            }
+            else
+            {
+                console.log(`[ACTION] Putdown failed.`);
+                myIntentions.clearPlan();
+            }
+        }
+        if (DEBUG) console.log('[ACTION] living executeNexAction');
+    }
 
     /**
      * Store the failed action in a queue of 3 element
@@ -396,12 +515,12 @@ export class Intentions {
         }
         if (type === 'deliver')
         {
-            return this.#beliefs.getCarriedParcels().size > 0;
+            return this.#beliefs.getCarriedParcels().length > 0;
         }
         if (type === 'explore')
         {
             // explore, plan valide si l'agent ne porte aucun parcel
-            return this.#beliefs.getCarriedParcels().size === 0; 
+            return this.#beliefs.getCarriedParcels().length === 0; 
         }
         return false;
     }
@@ -544,7 +663,7 @@ export class Intentions {
 
     /** clear failedActionsQueue */
     clearFailedActionsQueue() {
-        this.#failedActionsQueue.clear();
+        this.#failedActionsQueue=[];
     }
 
     shiftIntention() {
@@ -610,10 +729,10 @@ export class Intentions {
             return false;
         }
 
-        // CASE 2: deliver en cours
+        // CASE 2: deliver in progress
         if (type === 'deliver') 
         {
-            if (this.#beliefs.getCarriedParcels().size === 0) {
+            if (this.#beliefs.getCarriedParcels().length === 0) {
                 console.log('[RECONSIDER] Nothing to deliver.');
                 return true;
             }
