@@ -9,11 +9,14 @@
 // Include:       desires.js, beliefs.js
 // Notes:         Intentions bridge the gap between desires (what the agent wants)
 //                and actions (what the agent actually does).
-// TODO: Améliorer la fonction filterIntention pour rammaser des parcels pas loin du chemin
-//         -> utiliser les helpers déjà en place, l'idée est d'attribuer un score à chaque intention.
+// TODO:      
+
 
 import { myBeliefs } from './agent_bdi.js';
-
+import { 
+    DEBUG,
+    TIME_COST_PER_TILE
+ } from './agent_bdi.js';
 /*******************************************************************************/
 export class Intentions {
     /** @type {Array<string>} */
@@ -66,6 +69,11 @@ export class Intentions {
     /**  @param {string} impossibleIntentions - The list of impossible intentions. */
     setCurrentImpossibleIntentions(impossibleIntentions) {
         this.#currentImpossibleIntentions.add(impossibleIntentions);
+    }
+
+    /** Clear the list of impossible intentions. */
+    clearCurrentImpossibleIntentions() {
+        this.#currentImpossibleIntentions.clear();
     }
     /**
      * Checks if smartReplan is currently active
@@ -163,7 +171,7 @@ export class Intentions {
         const playerPos = this.#beliefs.getMyPosition();
         const returnIntention = [];
 
-        // If a parcel is visible 
+        // CASE 1: If a parcel is visible
         if (this.#beliefs.getVisibleParcels().length > 0)
             for (const p of pickups) {
                 returnIntention.push(p)
@@ -171,8 +179,8 @@ export class Intentions {
                 this.#visitedSpawnPoints.clear();
             }
 
-        // If carrying parcels, consider deliver
-        if (this.#beliefs.getCarriedParcels().size > 0) {
+        // CASE 2: If carrying parcels, consider deliver
+        if (this.#beliefs.getCarriedParcels().length > 0) {
             if (delivers.length > 0) {
                 const closestDeliver = this.#findClosestIntention(delivers, playerPos);
                 if (closestDeliver) {
@@ -182,12 +190,13 @@ export class Intentions {
             }
         }
 
-        // Fallback to exploration if no pickup or deliver is available
+        // CASE 3: Fallback to exploration if no pickup or deliver is available
         if (returnIntention.length === 0 && explores.length > 0) {
             const closest = this.#findClosestIntention(explores, playerPos);
             if (closest) {
-                // If the closest explore is outside of vision range, go there directly
-                if (this.#getIntentionDistance(closest, playerPos) >= this.#beliefs.getVisionRange()) {
+                // If the closest explore outside of vision range is not already visited, go there directly
+                if ((this.#getIntentionDistance(closest, playerPos) >= this.#beliefs.getVisionRange()) 
+                        && !this.isSpawnPointVisited(closest)) {
                     // but keep in mind the already visited spawn points to avoid loops
                     if (!this.isSpawnPointVisited(closest)) {
                        // console.log('[FILTER] Closest explore already outside vision range. Adding', closest);
@@ -287,8 +296,15 @@ export class Intentions {
         const x = parseInt(parts[1]);
         const y = parseInt(parts[2]);
 
-        const dist = this.#generatePathTo(playerPosition, {x, y}).length
-        return dist;
+        if (playerPosition.x != x && playerPosition.y != y)
+        {
+            const dist = this.#generatePathTo(playerPosition, {x, y}).length
+            return dist;
+        } // ERrror
+        else 
+        {
+            return -0.1;
+        }
     }
 
     /**
@@ -419,55 +435,79 @@ export class Intentions {
         return this.#currentObjective;
     }
 
-    /** @return {number|null} */
-    getScoreOfCurrentObjective() {
-        if (!this.#currentObjective) return null;
+    /**
+     * Calculates the score of a given intention based on its type, distance, and associated rewards.
+     * The score estimates the net reward after accounting for time and distance costs.
+     *
+     * @param {string} intention - The intention to score (e.g., 'pickup_5_3', 'deliver_2_4', 'explore').
+     * @returns {number|null} The estimated score, or null if the intention is invalid.
+     */
+    getScoreOfIntention(intention) {
+        if (!intention) return null;
 
-        const parts  = this.#currentObjective.split('_');
-        const type   = parts[0];
-        const obj_x  = parseInt(parts[1]);
-        const obj_y  = parseInt(parts[2]);
-        if (type === 'explore')
-        {
-            return 0;
-        } 
-        // Supposing the agent move from 10 tiles in 3 seconds
-        // Supposing the agent pickup all the visible parcels
-        // We estimate the reward, based on distance and time to achieve the pickup and deliver
-        else if (type === 'pickup')
-        {
-            const dist_obj = this.#plan.length;
+        const parts = intention.split('_');
+        const type = parts[0];
+        const obj_x = parseInt(parts[1]);
+        const obj_y = parseInt(parts[2]);
+
+        // CASE 1: Explore
+        if (type === 'explore') {
+            return 0; // No direct reward for exploration
+        }
+
+        // CASE 2: Pickup - calcule the possible reward of picking up and deliver only this parcel
+        else if (type === 'pickup') {
+            // Distance to reach the parcel (estimated by plan length)
+            const dist_obj = this.#getIntentionDistance(intention, this.#beliefs.getMyPosition());
+            // Find the closest deliver intention after pickup
             const next_deliver = this.#findClosestIntention(
                 Array.from(this.#desires.getDesires()).filter(d => d.startsWith('deliver_')),
-                {x: obj_x, y: obj_y}
+                { x: obj_x, y: obj_y }
             );
 
             if (!next_deliver) {
-                console.log('[SCORE] No deliver found');
+                console.log('[SCORE] No deliver found for pickup intention:', intention);
                 return 0;
             }
-            const dist_deliver = this.#getIntentionDistance(next_deliver, {x: obj_x, y: obj_y});
-            console.log(`[SCORE] dist_obj: ${dist_obj}, dist_deliver: ${dist_deliver}`);
-            const parcelReward = this.#beliefs.getVisibleParcels().find(p => p.x === obj_x && p.y === obj_y)?.reward ?? 0;
-            console.log(`[SCORE] parcelReward: ${parcelReward}`);
-            // parcel deacreasing from 1 point every seconds
-            const possibleReward = parcelReward - (dist_deliver + dist_obj) * 3/10; // walking 10 tiles in 3 seconds, so 0.3 point every tile
-            console.log(`[SCORE] possibleReward: ${possibleReward}`);
+            else {
+                if (DEBUG) console.log('[SCORE]: next_deliver:', next_deliver, '|obj_x_y:', { x: obj_x, y: obj_y });
+            }
+
+            // Distance from parcel to deliver location
+            const dist_deliver = this.#getIntentionDistance(next_deliver, { x: obj_x, y: obj_y });
+            
+            // Reward of the target parcel
+            const parcelReward = this.#beliefs.getVisibleParcels() 
+                .find(p => p.x === obj_x && p.y === obj_y)?.reward ?? 0;
+
+            // Net reward: parcel reward minus time cost (0.3 points per tile)
+            const possibleReward = parcelReward - (dist_deliver + dist_obj) * TIME_COST_PER_TILE;
+            if (DEBUG) console.log(`[SCORE] Intention: ${intention} dist_obj: ${dist_obj}, 
+                    dist_deliver: ${dist_deliver}, parcelReward: ${parcelReward}, possibleReward: ${possibleReward} `);
             return possibleReward;
         }
-        else if (type === 'deliver')
-        {
-            const dist_deliver = this.#plan.length;
+
+        // CASE 3: Deliver
+        else if (type === 'deliver') {
+            // Distance to reach the delivery location
+            const dist_deliver = this.#getIntentionDistance(intention, this.#beliefs.getMyPosition());
+            // Sum of rewards for all carried parcels
             const carriedParcels = this.#beliefs.getCarriedParcels();
             let totalReward = 0;
             carriedParcels.forEach(p => {
                 totalReward += p.reward;
             });
-            console.log(`[SCORE] totalReward: ${totalReward}`);
-            // walking 10 tiles in 3 seconds, so 0.3 point every tile
-            return totalReward - dist_deliver * 3/10; 
+            if (DEBUG) console.log(`[SCORE] Futur Reward: ${totalReward}`);
+
+            // Net reward: total reward minus time cost (0.3 points per tile)
+            return totalReward - dist_deliver * 0.3;
         }
 
+        // --- Invalid intention ---
+        else {
+            console.log('[SCORE] Invalid intention type:', type);
+            return null;
+        }
     }
 
     /**
@@ -535,7 +575,7 @@ export class Intentions {
         // CASE 1: pickup in progress
         if (type === 'pickup')
         {
-            // When parcel disapear: reconsider
+            // CASE 1.1: parcel disapear because pickup by another agent or reward timeout
             const targetGone = delta.goneParcelIds.some(id =>
             {
                 const p = this.#beliefs.getVisibleParcels()
@@ -543,8 +583,6 @@ export class Intentions {
                 return p?.x === obj_x && p?.y === obj_y;
             })
             // Or simplier 
-            || !this.#beliefs.getVisibleParcels()
-                .some(p => !p.carriedBy && p.x === obj_x && p.y === obj_y);
 
             if (targetGone)
             {

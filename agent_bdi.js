@@ -5,15 +5,13 @@
 //                - Beliefs: Agent's knowledge/perception about the world (position, parcels, map, etc.)
 //                - Desires: Agent's goals (pickup parcels, deliver, explore)
 //                - Intentions: Agent's selected plans to achieve desires
-// Include:       beliefs.js, desires.js, intentions.js       
+// Include:       beliefs.js, desires.js, intentions.js, use_LLM.js, tools_LLM.js     
 // 
 // TODO 1:     prendre une glace
 // TODO 2:    - Rajouter les tiles fléchés à la logique
 //            - Rajouter les crate (boite jaune) à la logique
-//            1. Vérifier l'implémentation de la fonction getScoreOfCurrentObjective()
-//            2. Terminer la révision d'intention: quand clear currentImpossibleIntention
+//            2. Implémenter fonction sortIntention par rapport au score qu'elle peuvent rapporter (utilise getScoreOfIntention)
 //            3. Etendre le AGENT_PROMPT dans use_LLM.js pour ajouter des outils.
-
 //
 // TODO 3:    Where do we have to updateProbabilityMap()? 
 //                 not in onSensing, take to long
@@ -38,7 +36,7 @@ registerTool("move", move);
 const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
 const DEBUG = process.env.DEBUG;
-
+const TIME_COST_PER_TILE = process.env.TIME_COST_PER_TILE
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -215,7 +213,7 @@ async function core_loop(delta)
         if (DEBUG) console.log('[PLAN] Generated plan:', myIntentions.getPlan());
         if (DEBUG) console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
     } else {
-        if (DEBUG) console.log('[PLAN] Existing plan:', myIntentions.getPlan());
+        if (DEBUG) console.log('[PLAN] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
     }
     
 
@@ -235,6 +233,9 @@ async function core_loop(delta)
         // (onSensing is called every server frame, but executeNextAction take much more time)
         if (!isExecuting)
         {  
+            const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentObjective()); // for debug and analysis, not used for decision
+            if (DEBUG) console.log(`[SCORE] Score for current objective '${myIntentions.getCurrentObjective()}': ${score}`);
+            if (DEBUG) console.log('[POSITION] x,y:', myBeliefs.getMyPosition())
             isExecuting = true;
             try
             {
@@ -250,7 +251,10 @@ async function core_loop(delta)
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
-        if (DEBUG) console.log('[RECONSIDER] Checking if reconsideration is needed with delta:', delta);
+        if (DEBUG) console.log('[RECONSIDER] Checking if reconsideration is needed with delta:');
+        if (DEBUG) console.log('Delta.newParcels:', delta.newParcels, 'Delta.goneParcelIds:', delta.goneParcelIds, 
+                'Delta.newAgents:', delta.newAgents, 'Delta.goneAgentIds:', delta.goneAgentIds);
+
         if (myIntentions.reconsider(delta) && !myIntentions.isSmartReplanActive())
         {
             if (DEBUG) console.log('[RECONSIDER] Triggered reconsideration based on delta:', delta);
@@ -271,7 +275,20 @@ async function core_loop(delta)
         }
     }
     else {
-        if (DEBUG) console.log('[ShouldNotContinue] Plan empty, succeded or impossible');
+        // log for debuging 
+        if (myIntentions.getPlan().length === 0) {
+            if (DEBUG) console.log('[ShouldNotContinue]: Plan is empty');
+        }
+        else if (myIntentions.succeeded()) {
+            if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
+                + myIntentions.getCurrentObjective() + '\' already succeeded');
+        }
+        else if (myIntentions.impossible()) {
+            if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
+                + myIntentions.getCurrentObjective() + '\' is impossible');
+        }
+        // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
+        myIntentions.clearCurrentImpossibleIntentions();
     }
     if (DEBUG) console.log('[CORE_LOOP] EXIT *********************** ');
 }
@@ -562,4 +579,10 @@ socket.onMsg(async (id, name, msg) =>
     await socket.emitSay(id, { reply: response });
 });
 
-export { myBeliefs, myIntentions, socket, registerTool };
+export { 
+    DEBUG, 
+    TIME_COST_PER_TILE,
+    myBeliefs, 
+    myIntentions, 
+    socket, 
+    registerTool };
