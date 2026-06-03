@@ -143,3 +143,293 @@ export function getCurrentObjective(){
     // Call methods of myIntentions
     return myIntentions.getCurrentObjective();
 }
+
+
+/**
+ * Sets the agent's current BDI intention if the new intention has a higher
+ * score than the current one, or if there is no current intention.
+ * Relies entirely on existing BDI logic (getScoreOfIntention, setPlan, etc.).
+ * Valid formats: goto_X_Y | pickup_X_Y | deliver_X_Y | explore_X_Y | wait_condition
+ *                  (where X and Y are integers and condition is a string)
+ * @param {string} strIntention - Intention string in BDI format.
+ * @returns {string|false} "accepted" | "rejected: current intention has higher score" | false
+ */
+export function setIntention(strIntention)
+{
+    // Validate format
+    const regexValid = /^(goto|pickup|deliver|explore)_(\d+)_(\d+)$|^wait_.+$/;
+    if (!regexValid.test(strIntention))
+    {
+        return `Error: invalid intention format '${strIntention}'. Valid formats: goto_X_Y | pickup_X_Y | deliver_X_Y | explore_X_Y | wait_condition`;
+    }
+
+    const strCurrentObjective = myIntentions.getCurrentObjective();
+    // No current intention: always accept
+    if (!strCurrentObjective)
+    {
+        myIntentions.setIntentionInFrontAndPlan(strIntention);
+        return 'accepted';
+    }
+
+    // Compare scores
+    const nbrCurrentScore = myIntentions.getScoreOfIntention(strCurrentObjective) ?? 0;
+    const nbrNewScore     = myIntentions.getScoreOfIntention(strIntention) ?? 0;
+
+    if (nbrNewScore > nbrCurrentScore)
+    {
+        myIntentions.setIntentionInFrontAndPlan(strIntention);
+        return 'accepted';
+    }
+
+    return 'rejected: current intention has higher score';
+}
+
+
+/**
+ * Returns all known tiles from beliefs.
+ * Used by the LLM to identify target tiles (e.g. leftmost delivery tile).
+ * @returns {string|false} JSON array of {x, y, type} or false if no tiles.
+ */
+export function getTiles()
+{
+    const arrTiles = myBeliefs.getTiles();
+    if (!arrTiles || arrTiles.length === 0)
+    {
+        return false;
+    }
+
+    return JSON.stringify(arrTiles);
+}
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SPECIAL MISSION TOOLS
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Parses and validates a special mission JSON string.
+ * Checks required fields and type-specific parameters.
+ * @param {string} strJson - Raw JSON string from LLM.
+ * @returns {{valid: boolean, mission: Object|null, error: string|null}}
+ * JSON structure:
+ * {
+ *   "id": "<short_unique_snake_case_id>",
+ *   "type": "<scoring | constraint | behavior>",
+ *   "description": "<human-readable summary of the rule>",
+ *   "active": true,
+ *   "parameters": { <type-specific fields, see below>}
+ * }
+ * 
+ * // parameters for type "scoring"
+ *       {
+ *           "condition": {
+ *               "tile": {"x": 3, "y": 5},       // optional: specific delivery tile
+ *               "stack_size": 3                  // optional: exact number of parcels
+ *           },
+ *           "reward_modifier": {
+ *               "multiplier": 5.0,               // multiply base reward by this
+ *               "flat_bonus": 10,                // add flat points
+ *               "override": 0                    // replace reward entirely (e.g. 0 pts)
+ *           }
+ *       }
+ * 
+ * // parameters for type "constraint"
+ * {
+ *   "tile": {"x": 4, "y": 2},
+ *   "penalty": -50,                    // points lost if violated
+ *   "block_navigation": true           // if true, A* avoids this tile entirely
+ * }
+ * 
+ * // parameters for type "behavior"
+ * {
+ *   "rule": "avoid_tile",               // e.g. "avoid_tile", "prefer_pickup", "wait_condition"
+ *   "value": {"x": 1, "y": 1}          // e.g. tile to avoid, or condition to wait for
+ * }
+ */
+function _parseSpecialMission(strJson)
+{
+    let objMission;
+    try
+    {
+        objMission = JSON.parse(strJson);
+    }
+    catch (e)
+    {
+        return { valid: false, mission: null, error: 'invalid JSON: ' + e.message };
+    }
+
+    // Required top-level fields
+    const arrRequired = ['id', 'type', 'description', 'active', 'parameters'];
+    for (const strField of arrRequired)
+    {
+        if (objMission[strField] === undefined)
+        {
+            return { valid: false, mission: null, error: `missing field: ${strField}` };
+        }
+    }
+
+    // Valid types
+    const arrValidTypes = ['scoring', 'constraint', 'behavior'];
+    if (!arrValidTypes.includes(objMission.type))
+    {
+        return { valid: false, mission: null, error: `invalid type: ${objMission.type}` };
+    }
+
+    // Type-specific validation
+    if (objMission.type === 'constraint')
+    {
+        if (!objMission.parameters.tile ||
+            typeof objMission.parameters.tile.x !== 'number' ||
+            typeof objMission.parameters.tile.y !== 'number')
+        {
+            return { valid: false, mission: null, error: 'constraint requires parameters.tile {x, y}' };
+        }
+    }
+
+    if (objMission.type === 'scoring')
+    {
+        if (!objMission.parameters.reward_modifier)
+        {
+            return { valid: false, mission: null, error: 'scoring requires parameters.reward_modifier' };
+        }
+    }
+
+    if (objMission.type === 'behavior')
+    {
+        if (!objMission.parameters.rule || objMission.parameters.value === undefined)
+        {
+            return { valid: false, mission: null, error: 'behavior requires parameters.rule and parameters.value' };
+        }
+    }
+
+    return { valid: true, mission: objMission, error: null };
+}
+
+/**
+ * Checks for duplicate missions against an existing list.
+ * Detects both exact id duplicates and semantic duplicates by type.
+ * @param {Object} objNewMission - Parsed mission object.
+ * @param {Object[]} arrExisting - Array of existing mission objects.
+ * @returns {"duplicate_id" | "duplicate_semantic" | null}
+ */
+function _checkDuplicate(objNewMission, arrExisting)
+{
+    for (const objExisting of arrExisting)
+    {
+        // Exact id match
+        if (objExisting.id === objNewMission.id)
+        {
+            return 'duplicate_id';
+        }
+
+        // Semantic match: same type and same key parameters
+        if (objExisting.type === objNewMission.type)
+        {
+            if (objNewMission.type === 'constraint')
+            {
+                const tileNew = objNewMission.parameters.tile;
+                const tileOld = objExisting.parameters?.tile;
+                if (tileOld && tileNew.x === tileOld.x && tileNew.y === tileOld.y)
+                {
+                    return 'duplicate_semantic';
+                }
+            }
+
+            if (objNewMission.type === 'scoring')
+            {
+                const tileNew = objNewMission.parameters?.condition?.tile;
+                const tileOld = objExisting.parameters?.condition?.tile;
+                if (tileNew && tileOld &&
+                    tileNew.x === tileOld.x && tileNew.y === tileOld.y)
+                {
+                    return 'duplicate_semantic';
+                }
+            }
+
+            if (objNewMission.type === 'behavior')
+            {
+                if (objExisting.parameters?.rule === objNewMission.parameters?.rule)
+                {
+                    return 'duplicate_semantic';
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Adds a special mission to beliefs after validation and duplicate check.
+ * Automatically applies constraint missions to the navigation system.
+ * @param {string} strJson - JSON string representing the special mission.
+ * @returns {string|false}
+ *   "stored: <id>"           — mission added successfully
+ *   "duplicate_id: <id>"     — mission with same id already exists
+ *   "duplicate_semantic: <description>" — semantically equivalent mission exists
+ *   false                    — invalid JSON or missing fields
+ */
+export function checkformatAndAddSpecialMission(strJson)
+{
+    const { valid, mission: objMission, error: strError } = _parseSpecialMission(strJson);
+    if (!valid)
+    {
+        console.warn(`[addSpecialMission] Validation failed: ${strError}`);
+        return false;
+    }
+
+    // Duplicate check
+    const arrExisting = myBeliefs.getSpecialMissions();
+    const strDuplicate = _checkDuplicate(objMission, arrExisting);
+
+    if (strDuplicate === 'duplicate_id')
+    {
+        return `duplicate_id: ${objMission.id}`;
+    }
+    if (strDuplicate === 'duplicate_semantic')
+    {
+        const objExisting = arrExisting.find(m =>
+            m.type === objMission.type
+        );
+        return `duplicate_semantic: "${objExisting.description}"`;
+    }
+
+    // Store in beliefs
+    myBeliefs.addSpecialMission(objMission);
+
+    // Side effect: apply constraint immediately to navigation
+    if (objMission.type === 'constraint' && objMission.parameters.block_navigation)
+    {
+        myBeliefs.addBlockedTile(
+            objMission.parameters.tile.x,
+            objMission.parameters.tile.y
+        );
+        console.log(`[addSpecialMission] Constraint applied: tile (${objMission.parameters.tile.x},${objMission.parameters.tile.y}) blocked`);
+    }
+
+    return `stored: ${objMission.id}`;
+}
+
+/**
+ * Returns a summary of all stored special missions (active and inactive).
+ * Used for explicit user queries ("what are your active missions?").
+ * @returns {string|false} JSON array of {id, type, description, active} or false.
+ */
+export function listSpecialMissions()
+{
+    const arrMissions = myBeliefs.getSpecialMissions();
+    if (!arrMissions || arrMissions.length === 0)
+    {
+        return 'no missions stored';
+    }
+
+    const arrSummary = arrMissions.map(m => (
+    {
+        id:          m.id,
+        type:        m.type,
+        description: m.description,
+        active:      m.active
+    }));
+
+    return JSON.stringify(arrSummary);
+}

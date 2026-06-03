@@ -11,7 +11,7 @@
 // TODO 2:    - Rajouter les tiles fléchés à la logique
 //            - Rajouter les crate (boite jaune) à la logique
 //            2. Implémenter fonction sortIntention par rapport au score qu'elle peuvent rapporter (utilise getScoreOfIntention)
-//            3. Etendre le AGENT_PROMPT dans use_LLM.js pour ajouter des outils.
+//            3. Ajouter les intentions "goto_x_y", "wait_condition", etc pour coller avec le PROMPT_AGENT dans use_LLM.js
 //
 // TODO 3:    Where do we have to updateProbabilityMap()? 
 //                 not in onSensing, take to long

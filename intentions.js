@@ -670,6 +670,16 @@ export class Intentions {
         this.#filteredIntentions.shift();
     }
 
+    /** 
+     * Sets the current intention.
+     * @param {string} intention - The intention to set.
+     */
+    setIntentionInFrontAndPlan(intention) {
+        this.#filteredIntentions.unshift(intention);
+        this.#currentObjective = intention;
+        this.setPlan();
+    }
+
     /**
      * Decides whether the agent should reconsider its current intention.
      * Only reacts to NEW percepts (delta), not known ones.

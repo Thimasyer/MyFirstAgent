@@ -63,6 +63,9 @@ export class Beliefs {
     /** @type {Set<string>} IDs des agents connus au sensing précédent */
     #knownAgentIds = new Set();
 
+    /** @type {Object[]} Special missions received from the server */
+    #specialMissions= [];
+
     constructor() {
         this.#probabilityMap = Array.from({ length: this.#mapWidth }, () =>
             Array.from({ length: this.#mapHeight }, () =>
@@ -187,6 +190,14 @@ export class Beliefs {
      */
     getMyScore() {
         return this.#myScore;
+    }
+
+    /**
+     * Gets the special missions.
+     * @returns {Object[]} see format at _parseSpecialMission in tools_LLM.js
+     */
+    getSpecialMissions() {
+        return this.#specialMissions;
     }
 
     // ****************************************************************************
@@ -431,6 +442,10 @@ export class Beliefs {
     {
         const key = `${(x)}_${(y)}`;
         this.blockedTiles.add(key);
+    }
+
+    addSpecialMission(specialMission) {
+        this.#specialMissions.push(specialMission);
     }
 
     /**
