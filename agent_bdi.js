@@ -27,7 +27,8 @@ import { calculate,
     get_current_time, 
     get_me_info, move, 
     getScoreOfIntention,
-    getCurrentObjective
+    getCurrentObjective,
+    setIntention
 } from "./tools_LLM.js";
 
 
@@ -36,7 +37,7 @@ const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
 const TIME_COST_PER_TILE = process.env.TIME_COST_PER_TILE
 const HEARTBEAT_DELAY_MS = 500;
-const DEBUG = false;
+const DEBUG = true;
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const myBeliefs = new Beliefs();
@@ -55,6 +56,20 @@ registerTool("get_me_info", get_me_info);
 registerTool("move", move);
 registerTool("getScoreOfIntention", getScoreOfIntention);
 registerTool("getCurrentObjective", getCurrentObjective);
+registerTool("setIntention", async (strInput) => {
+    const result = await setIntention(strInput);
+    if (result.startsWith("accepted")) {
+        console.log(`[LLM TOOL] Intention accepted: ${strInput}`);
+        return result;
+    } else if (result.startsWith("rejected")) {
+        console.log(`[LLM TOOL] Intention rejected: ${result}`);
+        return result;
+    } else {
+        console.log(`[LLM TOOL] Error: ${result}`);
+        return result;
+    }
+});
+registerTool("getTiles", myBeliefs.getTiles.bind(myBeliefs));
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 let lastSensingTime = Date.now();
@@ -213,18 +228,23 @@ async function core_loop(delta)
     if (DEBUG) console.log('[CORE_LOOP] ENTER *********************** ');
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
-    if (myIntentions.getPlan().length === 0) 
+    if (myIntentions.getPlan().length === 0) // ET SI ON ENLEVE CETTE CONDITON C PTETRE PLUS FACILE?
     {
         myDesires.genOption();
         if (DEBUG) console.log('[DESIRES] Generated desires:', myDesires.getDesires());
         myIntentions.desiresToIntention();
-        myIntentions.filterIntention();
+        myIntentions.filterAndSortIntention();
         if (DEBUG) console.log('[INTENTIONS] Generated intentions:', myIntentions.getFilteredIntentions());
         myIntentions.setPlan();
         if (DEBUG) console.log('[PLAN] Generated plan:', myIntentions.getPlan());
         if (DEBUG) console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
     } else {
+
         if (DEBUG) console.log('[PLAN] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
+        const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentObjective());
+        if (currentIntentionBlocked) {
+            myIntentions.clearPlan();
+        }
     }
     
 
@@ -271,7 +291,7 @@ async function core_loop(delta)
             if (DEBUG) console.log('[RECONSIDER] Triggered reconsideration based on delta:', delta);
             myDesires.genOption();
             myIntentions.desiresToIntention();
-            myIntentions.filterIntention();
+            myIntentions.filterAndSortIntention();
         }
 
         // ******** Line 20: sound (isPlanValid) *************
@@ -293,10 +313,12 @@ async function core_loop(delta)
         else if (myIntentions.succeeded()) {
             if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
                 + myIntentions.getCurrentObjective() + '\' already succeeded');
+                myIntentions.clearPlan(); // clear plan to trigger new plan generation on next loop
         }
         else if (myIntentions.impossible()) {
             if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
                 + myIntentions.getCurrentObjective() + '\' is impossible');
+                
         }
         // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
         myIntentions.clearCurrentImpossibleIntentions();

@@ -269,7 +269,7 @@ export class Beliefs {
 
         // Parcel that disappear from the last onSensing
         const goneParcelIds = [...this.#knownParcelIds].filter(
-            id => !currentParcelIds.has(id)
+            id => !currentParcelIds.has(id) 
         );
 
         // Store actual visible parcel for next time

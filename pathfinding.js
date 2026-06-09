@@ -142,7 +142,7 @@ function heuristic(a, b) {
  * @param {{x: number, y: number}} current
  * @returns {Array<string>}
  */
-function reconstructPath(cameFrom, current) {
+export function reconstructPath(cameFrom, current) {
     const path = [];
     while (cameFrom[current.x][current.y] !== null) {
         const parent = cameFrom[current.x][current.y];
@@ -153,4 +153,10 @@ function reconstructPath(cameFrom, current) {
         current = parent;
     }
     return path;
+}
+
+export function euclideanDistance(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
 }

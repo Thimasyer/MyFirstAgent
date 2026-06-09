@@ -129,12 +129,17 @@ Navigation & state:
 - getTiles()                         : returns all tiles [{x, y, type}]
                                        types: "0"=wall "1"=spawn "2"=delivery "3"=walkable
 
+
 Action:
 - calculate(expression)              : evaluates a math expression, e.g. "4*2"
 - get_current_time(location)         : returns local time for a given city
-- setIntention(intention_string)     : replaces current BDI intention if score is higher
-                                       valid formats: goto_X_Y | pickup_X_Y | deliver_X_Y
-                                       returns "accepted" or "rejected: current intention has higher score"
+- setIntention(input_string):
+  - Sets the agent's current BDI intention if the new intention has a higher score.
+  - input_string: Must be in format "<intention_string>|<nbrNewScore>".
+    Example: "goto_4_7|50" or "pickup_2_5|100".
+    If nbrNewScore is omitted (e.g., "goto_4_7"), defaults to 100.
+  - Valid intention formats: goto_X_Y | pickup_X_Y | deliver_X_Y | explore_X_Y | wait_condition.
+  - Returns: "accepted" or "rejected: <reason>" or "Error: <reason>".
 
 Special missions:
 - checkformatAndAddSpecialMission(json_string)     : validates and stores a persistent rule in the agent's beliefs
@@ -234,11 +239,16 @@ General:
 - Do not calculate arithmetic yourself — always call calculate().
 - Do not invent the current time — always call get_current_time().
 - Do not invent agent position — always call getMyPosition() or get_me_info().
+- Do not invent tile information — always call getTiles() for tile data.
 
 For EXECUTABLE requests:
+- To set an intention, call setIntention with a single string in format "<intention_string>|<nbrNewScore>".
+  Example: "goto_4_7|50" or "pickup_2_5".
+- If the user mentions a score (e.g., "for 10 points"), include it in the input string (e.g., "goto_4_7|10").
+- If the user does NOT mention a score, omit it (e.g., "goto_4_7"). The default score (100) will be used.
 - If coordinates involve math (e.g. "x=4*2"), call calculate() first, then setIntention().
 - If the request mentions a tile type (e.g. "leftmost delivery tile"), call getTiles() first.
-- To move the agent, call setIntention() with goto_X_Y — do not call move() directly
+- To move the agent, call setIntention() with goto_X_Y and the nbrNewScore given in the requests- do not call move() directly
   unless the request is conversational (e.g. "move one step up").
 - After setIntention(), give a Final Answer confirming the result.
 
@@ -259,15 +269,35 @@ Movement rules (for move() only):
 ════════════════════════════════════════════
 EXAMPLES
 ════════════════════════════════════════════
-
-User: "move to coordinate (4,7)"
+---
+User: "Go to (4,7)"
 → EXECUTABLE
-Thought: Single movement to a fixed position, no persistent rule.
+Thought: No score mentioned, use default.
 Action: setIntention
 Action Input: goto_4_7
 
 ---
+User: "Go to (4,7) for 10 points"
+→ EXECUTABLE
+Thought: Score mentioned (10), include it in the input.
+Action: setIntention
+Action Input: goto_4_7|10
 
+---
+User: "Pick up the parcel at (2,5) to get 50 points"
+→ EXECUTABLE
+Thought: Score mentioned (50), include it in the input.
+Action: setIntention
+Action Input: pickup_2_5|50
+
+---
+User: "Deliver at (1,3)"
+→ EXECUTABLE
+Thought: No score mentioned, use default.
+Action: setIntention
+Action Input: deliver_1_3
+
+---
 User: "Move to x=4*2 y=(1+3)*3"
 → EXECUTABLE, requires calculate() first
 Thought: Coordinates involve math, I must resolve them before calling setIntention.

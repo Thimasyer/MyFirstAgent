@@ -146,42 +146,78 @@ export function getCurrentObjective(){
 
 
 /**
- * Sets the agent's current BDI intention if the new intention has a higher
- * score than the current one, or if there is no current intention.
- * Relies entirely on existing BDI logic (getScoreOfIntention, setPlan, etc.).
- * Valid formats: goto_X_Y | pickup_X_Y | deliver_X_Y | explore_X_Y | wait_condition
- *                  (where X and Y are integers and condition is a string)
- * @param {string} strIntention - Intention string in BDI format.
- * @returns {string|false} "accepted" | "rejected: current intention has higher score" | false
+ * Sets the agent's current BDI intention if the new intention has a higher score.
+ * Accepts a single string argument in the format: "<intention_string>|<nbrNewScore>".
+ * If nbrNewScore is omitted, defaults to 100.
+ *
+ * Valid intention formats:
+ * - goto_X_Y
+ * - pickup_X_Y
+ * - deliver_X_Y
+ * - explore_X_Y
+ * - wait_condition
+ *
+ * @param {string} strInput - Input string in format "<intention_string>|<nbrNewScore>".
+ * @returns {string} "accepted" | "rejected: <reason>" | "Error: <reason>"
  */
-export function setIntention(strIntention)
+export function setIntention(strInput)
 {
-    // Validate format
+    // Parse input to extract intention and score
+    let strIntention, nbrNewScore;
+    if (typeof strInput === "string" && strInput.includes("|"))
+    {
+        const arrParts = strInput.split("|");
+        strIntention = arrParts[0].trim();
+        nbrNewScore = parseInt(arrParts[1].trim(), 10);
+
+        // Validate nbrNewScore
+        if (isNaN(nbrNewScore))
+        {
+            return `Error: invalid nbrNewScore '${arrParts[1]}'. Must be a number.`;
+        }
+    }
+    else
+    {
+        // If no "|" is provided, assume the entire input is the intention and use default score
+        strIntention = strInput;
+        nbrNewScore = 100; // Default score
+    }
+
+    // Validate intention format
     const regexValid = /^(goto|pickup|deliver|explore)_(\d+)_(\d+)$|^wait_.+$/;
     if (!regexValid.test(strIntention))
     {
         return `Error: invalid intention format '${strIntention}'. Valid formats: goto_X_Y | pickup_X_Y | deliver_X_Y | explore_X_Y | wait_condition`;
     }
 
+    // Get current intention and score
     const strCurrentObjective = myIntentions.getCurrentObjective();
+
     // No current intention: always accept
     if (!strCurrentObjective)
     {
+        console.log(`[SET INTENTION] No current intention. Accepting '${strIntention}' with score ${nbrNewScore}.`);
         myIntentions.setIntentionInFrontAndPlan(strIntention);
-        return 'accepted';
+        return "accepted";
     }
 
     // Compare scores
-    const nbrCurrentScore = myIntentions.getScoreOfIntention(strCurrentObjective) ?? 0;
-    const nbrNewScore     = myIntentions.getScoreOfIntention(strIntention) ?? 0;
+    const nbrCurrentScore = myIntentions.getScoreOfIntention(strCurrentObjective);
+    if (nbrCurrentScore === null)
+    {
+        return "rejected: no score for current intention";
+    }
 
     if (nbrNewScore > nbrCurrentScore)
     {
+        console.log(`[SET INTENTION] New score (${nbrNewScore}) > current score (${nbrCurrentScore}). Accepting '${strIntention}'.`);
         myIntentions.setIntentionInFrontAndPlan(strIntention);
-        return 'accepted';
+        return "accepted";
     }
-
-    return 'rejected: current intention has higher score';
+    else
+    {
+        return `rejected: current intention has higher score (${nbrCurrentScore} > ${nbrNewScore})`;
+    }
 }
 
 
