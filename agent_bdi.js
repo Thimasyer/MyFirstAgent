@@ -10,9 +10,10 @@
 // TODO 1:     prendre une glace
 // TODO 2:    - Rajouter les tiles fléchés à la logique
 //            - Rajouter les crate (boite jaune) à la logique
-//            3. Ajouter les intentions "goto_x_y" (FAIT), "wait_condition", etc pour coller avec le PROMPT_AGENT dans use_LLM.js
-//            4. Corriger/simplifier la boucle BDI pour gêrer le blocage lorsque plus aucune intention n'est possible si des cases était bloqué par un agent 
-//                  => idée commencé: reset les intentions et les cases bloqué une fois toutes les intentions checker impossibles
+//            2. Tenir compte des specialMission dans la stratégie de l'agent_bdi: ajout des blocekdTiles si pts négatifs, ajout des bonus tiles...
+//                  => Proposition LeChat: Stratégie 2 https://chat.mistral.ai/chat/0e03ec9e-19b7-42f8-990b-49c6be8fef2f
+//            3. Ajouter le traitement des intentions type "wait_condition"
+//
 //
 // TODO 3:    Where do we have to updateProbabilityMap()? 
 //                 not in onSensing, take to long
@@ -29,16 +30,19 @@ import { calculate,
     get_me_info, move, 
     getScoreOfIntention,
     getCurrentObjective,
-    setIntention
+    setIntention,
+    getTiles,
+    checkformatAndAddSpecialMission,
 } from "./tools_LLM.js";
 
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
-const TIME_COST_PER_TILE = process.env.TIME_COST_PER_TILE
+const TIME_COST_PER_TILE = process.env.TIME_COST_PER_TILE;
+const TIME_COST_PER_DELIVERY_TILE = process.env.TIME_COST_PER_DELIVERY_TILE;
 const HEARTBEAT_DELAY_MS = 500;
-const DEBUG = true;
+const DEBUG = false;
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const myBeliefs = new Beliefs();
@@ -70,7 +74,48 @@ registerTool("setIntention", async (strInput) => {
         return result;
     }
 });
-registerTool("getTiles", myBeliefs.getTiles.bind(myBeliefs));
+registerTool("getTiles", getTiles);
+registerTool("checkformatAndAddSpecialMission", async (strJSON) =>
+    {
+        // Appel de la fonction de validation et d'ajout
+        const result = await checkformatAndAddSpecialMission(strJSON);
+
+        // Vérification du résultat et affichage des missions stockées
+        if (result === false)
+        {
+            console.error("[checkformatAndAddSpecialMission] Invalid mission format.");
+            return "Error: Invalid mission format. Check JSON structure and required fields.";
+        }
+        else if (result.startsWith("duplicate_id:"))
+        {
+            const strMissionId = result.split(":")[1];
+            console.warn(`[checkformatAndAddSpecialMission] Duplicate mission ID: ${strMissionId}`);
+            return `Warning: Mission with ID "${strMissionId}" already exists.`;
+        }
+        else if (result.startsWith("duplicate_semantic:"))
+        {
+            const strDescription = result.split(":")[1].replace(/"/g, "");
+            console.warn(`[checkformatAndAddSpecialMission] Duplicate semantic mission: ${strDescription}`);
+            return `Warning: A similar mission already exists: "${strDescription}".`;
+        }
+        else if (result.startsWith("stored:"))
+        {
+            const strMissionId = result.split(":")[1];
+            console.log(`[checkformatAndAddSpecialMission] Mission stored: ${strMissionId}`);
+
+            // Affichage des missions stockées dans les beliefs
+            const arrSpecialMissions = myBeliefs.getSpecialMissions();
+            console.log("[Special Missions in Beliefs]:", JSON.stringify(arrSpecialMissions, null, 2));
+
+            return `Success: Mission "${strMissionId}" stored. Waiting for confirmation to apply changes.`;
+        }
+        else
+        {
+            console.error(`[checkformatAndAddSpecialMission] Unexpected result: ${result}`);
+            return `Error: Unexpected result from mission validation.`;
+        }
+    }
+);
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 let lastSensingTime = Date.now();
@@ -110,7 +155,6 @@ if (!socket) {
  */
 socket.onConfig((config) => {
     myBeliefs.setVisionRange(config.GAME.player.observation_distance);
-    console.log(`[CONFIG] Vision range: ${myBeliefs.getVisionRange()}`);
 });
 
 /**
@@ -227,6 +271,7 @@ socket.onSensing(async (data) => {
 async function core_loop(delta)
 {
     if (DEBUG) console.log('[CORE_LOOP] ENTER *********************** ');
+    console.log("[SPECIAL MISSION]", myBeliefs.getSpecialMissions());
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) // ET SI ON ENLEVE CETTE CONDITON C PTETRE PLUS FACILE?
@@ -319,10 +364,11 @@ async function core_loop(delta)
         else if (myIntentions.impossible()) {
             if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
                 + myIntentions.getCurrentObjective() + '\' is impossible');
+                myIntentions.clearPlan();
+                // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
+                myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
                 
         }
-        // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
-        myIntentions.clearCurrentImpossibleIntentions();
     }
     if (DEBUG) console.log('[CORE_LOOP] EXIT *********************** ');
 }
@@ -330,6 +376,7 @@ async function core_loop(delta)
 export { 
     DEBUG, 
     TIME_COST_PER_TILE,
+    TIME_COST_PER_DELIVERY_TILE,
     myBeliefs, 
     myIntentions, 
     socket, 

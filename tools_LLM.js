@@ -446,26 +446,26 @@ export function checkformatAndAddSpecialMission(strJson)
     return `stored: ${objMission.id}`;
 }
 
-/**
- * Returns a summary of all stored special missions (active and inactive).
- * Used for explicit user queries ("what are your active missions?").
- * @returns {string|false} JSON array of {id, type, description, active} or false.
- */
-export function listSpecialMissions()
-{
-    const arrMissions = myBeliefs.getSpecialMissions();
-    if (!arrMissions || arrMissions.length === 0)
-    {
-        return 'no missions stored';
-    }
+// /**
+//  * Returns a summary of all stored special missions (active and inactive).
+//  * Used for explicit user queries ("what are your active missions?").
+//  * @returns {string|false} JSON array of {id, type, description, active} or false.
+//  */
+// export function listSpecialMissions()
+// {
+//     const arrMissions = myBeliefs.getSpecialMissions();
+//     if (!arrMissions || arrMissions.length === 0)
+//     {
+//         return 'no missions stored';
+//     }
 
-    const arrSummary = arrMissions.map(m => (
-    {
-        id:          m.id,
-        type:        m.type,
-        description: m.description,
-        active:      m.active
-    }));
+//     const arrSummary = arrMissions.map(m => (
+//     {
+//         id:          m.id,
+//         type:        m.type,
+//         description: m.description,
+//         active:      m.active
+//     }));
 
-    return JSON.stringify(arrSummary);
-}
+//     return JSON.stringify(arrSummary);
+// }

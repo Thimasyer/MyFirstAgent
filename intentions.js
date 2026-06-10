@@ -18,6 +18,7 @@ import {
     socket,
     DEBUG,
     TIME_COST_PER_TILE, 
+    TIME_COST_PER_DELIVERY_TILE,
     myIntentions
 } from './agent_bdi.js';
 
@@ -246,7 +247,8 @@ export class Intentions {
             }
         }
 
-        this.#filteredSortedIntentions = this.#sortIntentions(returnIntention);
+        this.#filteredSortedIntentions = returnIntention;
+        //this.#filteredSortedIntentions = this.#sortIntentions(returnIntention); // TAKE TO LONG ://
         if (DEBUG) console.log(`[FILTER] Filtered intention: ${this.#filteredSortedIntentions.join(' -> ')}`);
     }
 
@@ -322,7 +324,7 @@ export class Intentions {
         } // ERrror
         else 
         {
-            console.log('ERROR: playerPosition = ojectivePosition');
+            console.log('ERROR in getIntentionDistance: playerPosition = ojectivePosition');
             return -0.1;
         }
     }
@@ -614,7 +616,7 @@ export class Intentions {
                 .find(p => p.x === obj_x && p.y === obj_y)?.reward ?? 0;
 
             // Net reward: parcel reward minus time cost (0.3 points per tile)
-            const possibleReward = parcelReward - (dist_deliver + dist_obj) * TIME_COST_PER_TILE;
+            const possibleReward = parcelReward - dist_obj*TIME_COST_PER_TILE - dist_deliver*TIME_COST_PER_DELIVERY_TILE;
             if (DEBUG) console.log(`[SCORE] Intention: ${intention} dist_obj: ${dist_obj}, 
                     dist_deliver: ${dist_deliver}, parcelReward: ${parcelReward}, possibleReward: ${possibleReward} `);
             return possibleReward;
@@ -867,9 +869,8 @@ export class Intentions {
                 .some(p => !p.carriedBy && p.x === x && p.y === y);
             const notCarried = this.#beliefs.getCarriedParcels().length === 0;
             const dist = this.#getIntentionDistance(this.#currentObjective, this.#beliefs.getMyPosition());
-            if (dist === -0.1) console.log('[ERROR Handling] getMyPosition give ', this.#beliefs.getMyPosition())
+            if (dist === -0.1) console.log('ERROR in Impossible: due to getIntentionDistance, getMyPosition give ', this.#beliefs.getMyPosition())
             const IsInVisionRange = (dist+1) <= this.#beliefs.getVisionRange();
-            console.log('VisionRange: ', myBeliefs.getVisionRange(), 'AND dist: ', dist);
             return parcelGone && notCarried && IsInVisionRange;
         }
         if (type === 'deliver')

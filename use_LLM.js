@@ -333,7 +333,7 @@ Action Input:
 Thought: No duplicate found. Structuring the mission.
 Special Mission:
 {
-  "id": "bonus_tile_3_5",
+  "id": "bonus-tile_3_5",
   "type": "scoring",
   "description": "Delivering at (3,5) gives 5x points",
   "active": true,
@@ -343,8 +343,8 @@ Special Mission:
   }
 }
 Action: addSpecialMission
-Action Input: {"id":"bonus_tile_3_5","type":"scoring","description":"Delivering at (3,5) gives 5x points","active":true,"parameters":{"condition":{"tile":{"x":3,"y":5}},"reward_modifier":{"multiplier":5.0}}}
-[Observation: stored: bonus_tile_3_5]
+Action Input: {"id":"bonus-tile_3_5","type":"scoring","description":"Delivering at (3,5) gives 5x points","active":true,"parameters":{"condition":{"tile":{"x":3,"y":5}},"reward_modifier":{"multiplier":5.0}}}
+[Observation: stored: bonus-tile_3_5]
 Thought: I have enough information to answer.
 Final Answer: Mission stored. From now on, delivering at (3,5) will give 5x points.
 
@@ -358,7 +358,7 @@ Action Input:
 [Observation: []]
 Special Mission:
 {
-  "id": "avoid_tile_2_3",
+  "id": "avoid-tile_2_3",
   "type": "constraint",
   "description": "Avoid tile (2,3), -50 pts penalty if violated",
   "active": true,
@@ -369,8 +369,8 @@ Special Mission:
   }
 }
 Action: addSpecialMission
-Action Input: {"id":"avoid_tile_2_3","type":"constraint","description":"Avoid tile (2,3), -50 pts penalty if violated","active":true,"parameters":{"tile":{"x":2,"y":3},"penalty":-50,"block_navigation":true}}
-[Observation: stored: avoid_tile_2_3]
+Action Input: {"id":"avoid-tile_2_3","type":"constraint","description":"Avoid tile (2,3), -50 pts penalty if violated","active":true,"parameters":{"tile":{"x":2,"y":3},"penalty":-50,"block_navigation":true}}
+[Observation: stored: avoid-tile_2_3]
 Thought: I have enough information to answer.
 Final Answer: Constraint stored. Tile (2,3) will now be avoided during navigation.
 `.trim();
