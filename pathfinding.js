@@ -24,8 +24,10 @@ export function generatePathTo(start, goal) {
         walkable[x] = new Array(myBeliefs.getMapHeight()).fill(true);
     }
 
-    // Mark non-walkable tiles (type "0") and dynamic obstacles
+    // Mark non-walkable tiles (type "0") and build a tile lookup for directional rules
+    const tilesByPosition = new Map();
     myBeliefs.getTiles().forEach(tile => {
+        tilesByPosition.set(`${tile.x},${tile.y}`, tile);
         if (tile.type === "0") {
             walkable[tile.x][tile.y] = false;
         }
@@ -100,6 +102,13 @@ export function generatePathTo(start, goal) {
                 continue;
             }
 
+            // Directional tiles may restrict traversal based on the destination tile only.
+            // Example: cannot move into a tile "↓" from above, only from below.
+            const neighborTile = tilesByPosition.get(`${neighbor.x},${neighbor.y}`);
+            if (!isTraversalAllowed(neighborTile?.type, dir.action)) {
+                continue;
+            }
+
             // Check if already evaluated
             if (closedSet.has(`${neighbor.x},${neighbor.y}`)) {
                 continue;
@@ -137,6 +146,35 @@ function heuristic(a, b) {
 }
 
 /**
+ * Returns the A* move action for a directional tile.
+ * @param {string|null|undefined} type
+ * @returns {string|null}
+ */
+function getArrowAction(type) {
+    switch (type) {
+        case '→': return 'move_right';
+        case '←': return 'move_left';
+        case '↑': return 'move_up';
+        case '↓': return 'move_down';
+        default: return null;
+    }
+}
+
+/**
+ * Checks whether a move is allowed into a tile with a directional constraint.
+ * @param {string|null|undefined} tileType
+ * @param {string} action
+ * @returns {boolean}
+ */
+function isTraversalAllowed(tileType, action) {
+    const arrowAction = getArrowAction(tileType);
+    if (arrowAction && arrowAction !== action) {
+        return false;
+    }
+    return true;
+}
+
+/**
  * Reconstructs the path from cameFrom map
  * @param {Array<Array<{x: number, y: number, action: string}|null>>} cameFrom
  * @param {{x: number, y: number}} current
@@ -155,6 +193,12 @@ export function reconstructPath(cameFrom, current) {
     return path;
 }
 
+/**
+ * Euclidean distance between two points.
+ * @param {{x: number, y: number}} a
+ * @param {{x: number, y: number}} b
+ * @returns {number}
+ */
 export function euclideanDistance(a, b) {
     const dx = a.x - b.x;
     const dy = a.y - b.y;

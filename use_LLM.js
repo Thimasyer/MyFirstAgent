@@ -128,6 +128,7 @@ Navigation & state:
 - move(direction)                    : moves one step: up | down | left | right
 - getTiles()                         : returns all tiles [{x, y, type}]
                                        types: "0"=wall "1"=spawn "2"=delivery "3"=walkable
+                                       directional types: "→","←","↑","↓" allow only movement in that direction
 
 
 Action:
