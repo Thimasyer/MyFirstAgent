@@ -66,6 +66,19 @@ export class Beliefs {
     /** @type {Object[]} Special missions received from the server */
     #specialMissions= [];
 
+    /** @type {Array<{id: string, x: number, y: number, reward: number}>} */
+    newParcels = []
+
+    /** @type {Array<string>} */
+    goneParcelsIDs = []
+
+    /** @type { Array<{id: string, x: number, y: number}>} */
+    newAgents = []
+
+    /** @type {Array<string>} */
+    goneAgentsIds = []
+
+
     constructor() {
         this.#probabilityMap = Array.from({ length: this.#mapWidth }, () =>
             Array.from({ length: this.#mapHeight }, () =>
@@ -165,7 +178,7 @@ export class Beliefs {
      * @returns {number}
      */
     getVisionRange() {
-        return this.#visionRange;
+        return this.#visionRange-1;
     }
 
     /**
@@ -248,12 +261,6 @@ export class Beliefs {
      * Implements brf(B, ρ): belief revision from new percept.
      * @param {Array<{id: string, x: number, y: number, carriedBy: string, reward: number}>} parcels
      * @param {Array<{id: string, x: number, y: number}>} agents
-     * @returns {{
-     *   newParcels: Array<{id: string, x: number, y: number, reward: number}>,
-     *   goneParcelIds: Array<string>,
-     *   newAgents: Array<{id: string, x: number, y: number}>,
-     *   goneAgentIds: Array<string>
-     * }}
      */
     updatePercepts(parcels, agents) {
         // ── Parcels delta ──────────────────────────────────────────
@@ -298,7 +305,10 @@ export class Beliefs {
         this.setVisibleParcels(parcels);
         this.setVisibleAgents(agents);
 
-        return { newParcels, goneParcelIds, newAgents, goneAgentIds };
+        this.newParcels = newParcels;
+        this.newAgents = newAgents;
+        this.goneParcelsIDs = goneParcelIds;
+        this.goneAgentsIds = goneAgentIds;
     }
 
     /**

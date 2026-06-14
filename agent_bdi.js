@@ -8,10 +8,8 @@
 // Include:       beliefs.js, desires.js, intentions.js, use_LLM.js, tools_LLM.js     
 // 
 // TODO 1:     prendre une glace
-// TODO 2:    - Rajouter les tiles fléchés à la logique
-//            - Rajouter les crate (boite jaune) à la logique
-//            2. Tenir compte des specialMission dans la stratégie de l'agent_bdi: ajout des blocekdTiles si pts négatifs, ajout des bonus tiles...
-//                  => Proposition LeChat: Stratégie 2 https://chat.mistral.ai/chat/0e03ec9e-19b7-42f8-990b-49c6be8fef2f
+// TODO 2:    - Rajouter les crate (boite jaune) à la logique
+//            2. Tenir compte des specialMission dans la stratégie de l'agent_bdi
 //            3. Ajouter le traitement des intentions type "wait_condition"
 //
 //
@@ -129,7 +127,7 @@ function startHeartbeat() {
         const now = Date.now();
         if (now - lastSensingTime >= HEARTBEAT_DELAY_MS) {
             console.log('[HEARTBEAT] No sensing data received, triggering core_loop...');
-            core_loop({ newParcels: [], goneParcelIds: [], newAgents: [], goneAgentIds: [] });
+            core_loop();
         }
     }, HEARTBEAT_DELAY_MS);
 }
@@ -233,19 +231,16 @@ socket.onSensing(async (data) => {
         x: a.x ?? 0,
         y: a.y ?? 0
     }));
+    // used later for reconsider()
+    myBeliefs.updatePercepts(parcels, agents);
 
-    // delta {newParcels, goneParcelIds, newAgents, goneAgentIds} used for reconsidering 
-    const delta = myBeliefs.updatePercepts(parcels, agents);
-    if (Object.values(delta).some(arr => arr.length > 0)) {
-        //console.log('Delta:', delta);
-    }
     // ***************** CORE OF BDI LOOP  ********************************
     if(!isCoreLoopRunning) // prevent guard
     { 
         isCoreLoopRunning = true;
         try 
         {
-            await core_loop(delta);
+            await core_loop();
         }
         finally 
         {
@@ -261,34 +256,29 @@ socket.onSensing(async (data) => {
 
 /** 
  * THE LOOP
- * @param {{
-     *   newParcels: Array<{id: string, x: number, y: number, reward: number}>,
-     *   goneParcelIds: Array<string>,
-     *   newAgents: Array<{id: string, x: number, y: number}>,
-     *   goneAgentIds: Array<string>
-     * }} delta
  */
-async function core_loop(delta)
+async function core_loop()
 {
-    if (DEBUG) console.log('[CORE_LOOP] ENTER *********************** ');
-    console.log("[SPECIAL MISSION]", myBeliefs.getSpecialMissions());
+    if (DEBUG) console.log("[IfBlock1] Special Mission: ", myBeliefs.getSpecialMissions());
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) // ET SI ON ENLEVE CETTE CONDITON C PTETRE PLUS FACILE?
     {
+        if (DEBUG) console.log(' [IfBlock1] Generated desires:', myDesires.getDesires());
         myDesires.genOption();
-        if (DEBUG) console.log('[DESIRES] Generated desires:', myDesires.getDesires());
         myIntentions.desiresToIntention();
         myIntentions.filterAndSortIntention();
-        if (DEBUG) console.log('[INTENTIONS] Generated intentions:', myIntentions.getFilteredIntentions());
+        if (1) console.log('[IfBlock1] Filtered intentions:', myIntentions.getFilteredIntentions());
         myIntentions.setPlan();
-        if (DEBUG) console.log('[PLAN] Generated plan:', myIntentions.getPlan());
-        if (DEBUG) console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
-    } else {
+        if (DEBUG) console.log('[IfBlock1] Generated plan:', myIntentions.getPlan());
+        if (DEBUG) console.log('[IfBlock1] ImpossibleIntentions: ', myIntentions.getCurrentImpossibleIntentions());
+    } 
+    else {
 
-        if (DEBUG) console.log('[PLAN] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
+        if (1) console.log('[ElseBlock1] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
         const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentObjective());
         if (currentIntentionBlocked) {
+            console.log('[ElseBlock1] ERROR: All intentions blocked, cleaning plan...')
             myIntentions.clearPlan();
         }
     }
@@ -301,18 +291,16 @@ async function core_loop(delta)
     && !myIntentions.succeeded()          // not succeeded(I, B)
     && !myIntentions.impossible();        // not impossible(I, B)
 
-    if (DEBUG) console.log('[ImpossibleIntentions] ', myIntentions.getCurrentImpossibleIntentions());
-
     if (shouldContinue)
     {
+        const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentObjective()); // for debug and analysis, not used for decision
+        if (1) console.log(`[IfBlock2] Score for current objective '${myIntentions.getCurrentObjective()}': ${score}`);
+        
         // ******** Line 11+12 Execute action ****************
         // guard, for preventing launching several action in parallel 
         // (onSensing is called every server frame, but executeNextAction take much more time)
         if (!isExecuting)
         {  
-            const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentObjective()); // for debug and analysis, not used for decision
-            if (DEBUG) console.log(`[SCORE] Score for current objective '${myIntentions.getCurrentObjective()}': ${score}`);
-            if (DEBUG) console.log('[POSITION] x,y:', myBeliefs.getMyPosition())
             isExecuting = true;
             try
             {
@@ -323,30 +311,31 @@ async function core_loop(delta)
                 isExecuting = false;
             }
         } else {
-            //console.log('[CORE_LOOP] shouldContinue, but isExecuting');
+            console.log('   [ElseBlock2.1] ShouldContinue, but isExecuting');
         }
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
-        if (DEBUG) console.log('[RECONSIDER] Checking if reconsideration is needed with delta:');
-        if (DEBUG) console.log('Delta.newParcels:', delta.newParcels, 'Delta.goneParcelIds:', delta.goneParcelIds, 
-                'Delta.newAgents:', delta.newAgents, 'Delta.goneAgentIds:', delta.goneAgentIds);
-
-        if (myIntentions.reconsider(delta) && !myIntentions.isSmartReplanActive())
+        if (1) console.log('[IfBlock3] Trigger reconsideration based on delta: nAgent, nParcels, goneAgents, goneParcles',
+             myBeliefs.newAgents, myBeliefs.newParcels, myBeliefs.goneAgentsIds, myBeliefs.goneParcelsIDs);
+        if (myIntentions.reconsider())
         {
-            if (DEBUG) console.log('[RECONSIDER] Triggered reconsideration based on delta:', delta);
             myDesires.genOption();
+            if (1) console.log('   [IfBlock3.1] Desires:', myDesires.getDesires());
             myIntentions.desiresToIntention();
             myIntentions.filterAndSortIntention();
+            if (1) console.log('   [IfBlock3.1] Filtered and sorted intention:', myIntentions.getFilteredIntentions());
         }
 
         // ******** Line 20: sound (isPlanValid) *************
         // replan if plan invalide
-        if (!myIntentions.isPlanValid() && !myIntentions.isSmartReplanActive())
+        if (!myIntentions.isPlanValid())
         {
-            if (DEBUG) console.log('[REPLAN] Plan invalid or empty, replanning...');
+            if (1) console.log('[IfBlock4] Plan invalid, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)
             {
+                if (1) console.log('   [IfBlock4.1] SetPlan');
+                myIntentions.clearPlan();
                 myIntentions.setPlan();
             }
         }
@@ -354,15 +343,20 @@ async function core_loop(delta)
     else {
         // log for debuging 
         if (myIntentions.getPlan().length === 0) {
-            if (DEBUG) console.log('[ShouldNotContinue]: Plan is empty');
+            if (DEBUG) console.log('[EsleBlock2]: Plan is empty');
         }
         else if (myIntentions.succeeded()) {
-            if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
+            if (1) console.log('[ElseBlock2] Current intention \'' 
                 + myIntentions.getCurrentObjective() + '\' already succeeded');
-                myIntentions.clearPlan(); // clear plan to trigger new plan generation on next loop
+            if (myIntentions.getCurrentObjective().startsWith('explore')) {
+                myIntentions.shiftIntention();
+                myIntentions.setPlan();
+            } else {
+                myIntentions.clearPlan();
+            }
         }
         else if (myIntentions.impossible()) {
-            if (DEBUG) console.log('[ShouldNotContinue]: Current intention \'' 
+            if (DEBUG) console.log('[ElseBlock2]: Current intention \'' 
                 + myIntentions.getCurrentObjective() + '\' is impossible');
                 myIntentions.clearPlan();
                 // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
@@ -370,7 +364,6 @@ async function core_loop(delta)
                 
         }
     }
-    if (DEBUG) console.log('[CORE_LOOP] EXIT *********************** ');
 }
 
 export { 

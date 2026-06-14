@@ -141,7 +141,7 @@ export function generatePathTo(start, goal) {
  * @param {{x: number, y: number}} b
  * @returns {number}
  */
-function heuristic(a, b) {
+export function heuristic(a, b) {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 

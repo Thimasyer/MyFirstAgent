@@ -11,7 +11,7 @@
 //                and actions (what the agent actually does).
 // TODO:      
 
-import { euclideanDistance } from "./pathfinding.js";
+import { heuristic } from "./pathfinding.js";
 
 import { 
     myBeliefs, 
@@ -159,7 +159,7 @@ export class Intentions {
         this.#filteredSortedIntentions = [];
 
         if (this.#nonFilteredIntentions.length === 0) {
-            console.log('[FILTER] No intentions to filter');
+            console.log('  -->[FILTER] No intentions to filter');
             return;
         }
 
@@ -173,6 +173,7 @@ export class Intentions {
             this.clearFailedActionsQueue();
             myBeliefs.blockedTiles.clear();
         }
+
         // Separate desires by type
         const pickups = possibleIntentions.filter(d => d.startsWith('pickup_'));
         const delivers = possibleIntentions.filter(d => d.startsWith('deliver_'));
@@ -201,49 +202,42 @@ export class Intentions {
         }
 
         // CASE 3: Fallback to exploration if no pickup or deliver is available
-        if (returnIntention.length === 0 && explores.length > 0) {
-            const closest = this.#findClosestIntention(explores, playerPos);
+        if (explores.length > 0) {
+            // Filtrer toutes les intentions explore non visitées et hors du champ de vision
+            const outsideExplores = explores.filter(e => {
+                const e_parts = e.split('_');
+                const e_x = parseInt(e_parts[1]);
+                const e_y = parseInt(e_parts[2]);
+                const dist = heuristic({ x: e_x, y: e_y }, playerPos);
+                return (dist > this.#beliefs.getVisionRange()) && !this.isSpawnPointVisited(e);
+            });
+            console.log('outsideExplores: ', outsideExplores);
 
-            if (closest) {
-                const closest_x = parseInt(closest.split('_')[1]);
-                const closest_y = parseInt(closest.split('_')[2]);
-
-                // If the closest explore outside of vision range is not already visited, go there directly
-                const distance = euclideanDistance({ x: closest_x, y: closest_y }, playerPos)
-                if (( distance >= this.#beliefs.getVisionRange()) && !this.isSpawnPointVisited(closest)) {
-                    // but keep in mind the already visited spawn points to avoid loops
-                    if (!this.isSpawnPointVisited(closest)) {
-                       // console.log('[FILTER] Closest explore already outside vision range. Adding', closest);
-                        returnIntention.push(closest);
-                    }
-                    
-                // if closest explore is in vision range (stil no parcel visible)
-                } else {                   
-                    // Search the closest explore tiles outside vision range
-                    const outsideExplores = explores.filter(e => {
-                        const e_parts = e.split('_');
-                        const e_x = parseInt(e_parts[1]);
-                        const e_y = parseInt(e_parts[2]);
-                        const dist = euclideanDistance({x: e_x, y: e_y}, playerPos);
-                        return  dist > this.#beliefs.getVisionRange() && !this.isSpawnPointVisited(e);
-                    });
-
-                    if (DEBUG) console.log('[FILTER] visitedSpanwPoints:', this.getVisitedSpawnPoints());
-                    // Search the closest in set of explore outside vision range
-                    const closestOutsideVisionRange = this.#findClosestIntention(outsideExplores, playerPos);
-                    if (closestOutsideVisionRange) {
-                        //console.log('[FILTER] Closest explore in range of vision. Add one not visible:', closestOutsideVisionRange);
-                        returnIntention.push(closestOutsideVisionRange);
-                    }
-                    else {
-                        console.log('[FILTER] All explore possibility was try')
-                        myBeliefs.blockedTiles.clear();
-                        myIntentions.clearCurrentImpossibleIntentions();
-                        myIntentions.clearFailedActionsQueue();
-                    }
-                }
+            if (outsideExplores.length === 0) {
+                console.log('[FILTER] All explore possibility was tried');
+                myBeliefs.blockedTiles.clear();
+                myIntentions.clearCurrentImpossibleIntentions();
+                myIntentions.clearFailedActionsQueue();
             } else {
-                console.log('[FILTER] ERROR, closest not found')
+                // Trier les intentions explore par distance croissante
+                const sortedExplores = outsideExplores.sort((a, b) => {
+                    const a_parts = a.split('_');
+                    const a_x = parseInt(a_parts[1]);
+                    const a_y = parseInt(a_parts[2]);
+                    const distA = heuristic({ x: a_x, y: a_y }, playerPos);
+
+                    const b_parts = b.split('_');
+                    const b_x = parseInt(b_parts[1]);
+                    const b_y = parseInt(b_parts[2]);
+                    const distB = heuristic({ x: b_x, y: b_y }, playerPos);
+
+                    return distA - distB; // Tri par distance croissante
+                });
+
+                console.log('sortedExplores:', sortedExplores);
+
+                // Ajouter toutes les intentions explore triées à returnIntention
+                returnIntention.push(...sortedExplores);
             }
         }
 
@@ -383,7 +377,7 @@ export class Intentions {
     async executeNextAction()
     {
         if (this.getFilteredIntentions().length) {
-            if (DEBUG) console.log('[EXECUTENEXTECTION]: Filtered intention', this.getFilteredIntentions()) }
+            if (DEBUG) console.log('      [EXECUTENEXTECTION]: Filtered intention', this.getFilteredIntentions()) }
         const action = this.getPlan()[0];
         if (!action) return;
 
@@ -394,7 +388,7 @@ export class Intentions {
 
             if (!['up','down','left','right'].includes(direction))
             {
-                console.log(`[ACTION] Invalid direction: ${direction}`);
+                console.log(`      [ACTION] Invalid direction: ${direction}`);
                 this.clearPlan();
                 return;
             }
@@ -407,20 +401,21 @@ export class Intentions {
                 if (this.getPlan().length === 1) {
                     this.shiftIntention();
                     myBeliefs.blockedTiles.clear();
-                    if (DEBUG) console.log('[EXECUTENEXTACTION] blockedTiles cleared')
+                    if (DEBUG) console.log('      [ACTION] blockedTiles cleared')
                 }
-                if (DEBUG) console.log(`[ACTION] Moved ${direction}.`);
+                if (1) console.log(`      [ACTION] Moved ${direction}. My Position is `, myBeliefs.getMyPosition());
                 this.getNextAction(); // shift only on success
                 
             }
             else
             {
-                if (DEBUG) console.log(`[ACTION] Move ${direction} failed, will retry.`);
+                if (1) console.log(`      [ACTION] Move ${direction} failed, will retry.
+                     My Position is `, myBeliefs.getMyPosition());
                 
                 // after 3 failed action, replan  with blocked tiles
                 if(this.recordFailedAction(action))
                 {
-                    if (DEBUG) console.log('[FAILED ACTION] 3 action recorded')
+                    if (DEBUG) console.log('      [ACTION] 3 failed action recorded')
                     // get the blocked tiles
                     let x = myBeliefs.getMyPosition().x;
                     let y = myBeliefs.getMyPosition().y;
@@ -433,9 +428,8 @@ export class Intentions {
                         case 'move_left':  x -= 1; break;
                     }
 
-                   if (DEBUG) console.log('[PLAYER POS] ', myBeliefs.getMyPosition());
                     myBeliefs.addBlockedTile(x, y);
-                    if (DEBUG) console.log('[ACTION FAILED]: blockedTiles', myBeliefs.blockedTiles);
+                    if (DEBUG) console.log('      [ACTION]: blockedTiles', myBeliefs.blockedTiles);
                     this.setPlan();
                 }
             
@@ -535,8 +529,9 @@ export class Intentions {
         }
         if (type === 'explore')
         {
-            // explore, plan valide si l'agent ne porte aucun parcel
-            return this.#beliefs.getCarriedParcels().length === 0; 
+            // explore, plan valid if no parcels carried, or no new parcels appear
+            const NoParcelsCarried = this.#beliefs.getCarriedParcels().length === 0
+            return NoParcelsCarried && (myBeliefs.newParcels.length !=0) ; 
         }
         return false;
     }
@@ -567,7 +562,8 @@ export class Intentions {
      * @returns {string}
      */
     getCurrentObjective() {
-        return this.#currentObjective;
+        if (this.#currentObjective) return this.#currentObjective;
+        else return 'undefined or null'
     }
 
     /**
@@ -684,6 +680,7 @@ export class Intentions {
 
     shiftIntention() {
         this.#filteredSortedIntentions.shift();
+        this.#currentObjective = this.#filteredSortedIntentions[0];
     }
 
     /** 
@@ -700,7 +697,7 @@ export class Intentions {
      * Decides whether the agent should reconsider its current intention.
      * Only reacts to NEW percepts (delta), not known ones.
      * Faithful implementation of reconsider(I, B) from BDI loop v7.
-     * @param {{
+     * implicite param {{
      *   newParcels: Array<{id: string, x: number, y: number, reward: number}>,
      *   goneParcelIds: Array<string>,
      *   newAgents: Array<{id: string, x: number, y: number}>,
@@ -708,7 +705,7 @@ export class Intentions {
      * }} delta - Changes since last sensing
      * @returns {boolean} True if reconsideration is needed
      */
-    reconsider(delta = { newParcels: [], goneParcelIds: [], newAgents: [], goneAgentIds: [] }) {
+    reconsider() {
         // No objective: always reconsider
         if (!this.#currentObjective || this.#currentImpossibleIntentions.has(this.#currentObjective)) return true;
 
@@ -721,13 +718,12 @@ export class Intentions {
         if (type === 'pickup')
         {
             // CASE 1.1: parcel disapear because pickup by another agent or reward timeout
-            const targetGone = delta.goneParcelIds.some(id =>
+            const targetGone = myBeliefs.goneParcelsIDs.some(id =>
             {
                 const p = this.#beliefs.getVisibleParcels()
                     .find(p => p.id === id);
                 return p?.x === obj_x && p?.y === obj_y;
             })
-            // Or simplier 
 
             if (targetGone)
             {
@@ -740,7 +736,7 @@ export class Intentions {
                 this.#currentObjective,
                 this.#beliefs.getMyPosition()
             );
-            const betterParcel = delta.newParcels.some(p =>
+            const betterParcel = myBeliefs.newParcels.some(p =>
             {
                 const d = Math.abs(this.#beliefs.getMyPosition().x - p.x)
                         + Math.abs(this.#beliefs.getMyPosition().y - p.y);
@@ -762,14 +758,13 @@ export class Intentions {
                 console.log('[RECONSIDER] Nothing to deliver.');
                 return true;
             }
-            // Reconsider if a parcel pop-up
+            // Reconsider if a parcel pop-up, and if picking up this parcel bring a better score
             const playerPos = this.#beliefs.getMyPosition();
-            const closeParcel = delta.newParcels.some(p => {
-                const dist = Math.abs(playerPos.x - p.x) + Math.abs(playerPos.y - p.y);
-                return dist <= 5; // Seuil de distance (ex: 2 tiles)
-            });
-            if (closeParcel) {
+            if (myBeliefs.newParcels.length !=0) {
                 console.log('[RECONSIDER] New close parcel appeared during deliver.');
+                const currentScore = this.getScoreOfIntention(myIntentions.getCurrentObjective());
+                // CONTINUE ICI POUR PRENDRE EN COMPTE LE SCORE DE FAIRE LE DETOUR POUR PICKUP LA PARCEL QUI EST APPARU
+                // FAUT MODIFIER GET SCORE OF INTENTION
                 return true;
             }
             return false;
@@ -780,7 +775,7 @@ export class Intentions {
         {
             // Reconsidère SEULEMENT si une NOUVELLE parcel apparaît
             // (pas si elle était déjà connue au sensing précédent)
-            if (delta.newParcels.length > 0)
+            if (myBeliefs.newParcels.length > 0)
             {
                 console.log('[RECONSIDER] New parcel appeared during explore.');
                 return true;
@@ -832,12 +827,17 @@ export class Intentions {
                 const e_parts = e.split('_');
                 const e_x = parseInt(e_parts[1]);
                 const e_y = parseInt(e_parts[2]);
-                const distance = euclideanDistance({x: e_x, y: e_y}, myBeliefs.getMyPosition());
+                const distance = heuristic({x: e_x, y: e_y}, myBeliefs.getMyPosition());
                 return distance <= this.#beliefs.getVisionRange() }
             )
             this.markSpawnPointsAsVisited(visibleSpawnPoints);
-            
-            return Math.round(pos.x) === x && Math.round(pos.y) === y;
+            // delete from filteredSortedIntentions the already visited spawnPoint
+            this.#filteredSortedIntentions = this.#filteredSortedIntentions.filter(
+                intention => !visibleSpawnPoints.includes(intention)
+            );
+
+            // current intention succeeded, if explores tiles in in visionRange
+            return heuristic(pos, {x, y}) <= myBeliefs.getVisionRange();
         }
 
         return false;

@@ -10,6 +10,7 @@
 //                serve as input for the intention formation process.
 // TODO:          
 /*******************************************************************************/
+import { DEBUG } from './agent_bdi.js';
 import { Beliefs } from './beliefs.js';
 
 export class Desires {
@@ -41,6 +42,7 @@ export class Desires {
      * Generates desires based on current beliefs.
      */
     genOption() {
+        if (DEBUG) console.log('  --> [DESIRES] Generation of desires...');
         this.#setDesires.clear();
 
         // Add pickup desires for visible parcels
