@@ -318,6 +318,7 @@ async function core_loop()
         // ******** Line 16 Reconsider ***********************
         if (1) console.log('[IfBlock3] Trigger reconsideration based on delta: nAgent, nParcels, goneAgents, goneParcles',
              myBeliefs.newAgents, myBeliefs.newParcels, myBeliefs.goneAgentsIds, myBeliefs.goneParcelsIDs);
+        let planInvalidAfterReconsider = 0;
         if (myIntentions.reconsider())
         {
             myDesires.genOption();
@@ -325,11 +326,12 @@ async function core_loop()
             myIntentions.desiresToIntention();
             myIntentions.filterAndSortIntention();
             if (1) console.log('   [IfBlock3.1] Filtered and sorted intention:', myIntentions.getFilteredIntentions());
+            planInvalidAfterReconsider = 1
         }
 
         // ******** Line 20: sound (isPlanValid) *************
         // replan if plan invalide
-        if (!myIntentions.isPlanValid())
+        if (!myIntentions.isPlanValid() || planInvalidAfterReconsider)
         {
             if (1) console.log('[IfBlock4] Plan invalid, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)

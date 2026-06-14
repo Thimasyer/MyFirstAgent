@@ -586,7 +586,7 @@ export class Intentions {
             return 0; // No direct reward for exploration
         }
 
-        // CASE 2: Pickup - calcule the possible reward of picking up and deliver only this parcel
+        // CASE 2: Pickup - calcule the possible reward of picking up and deliver all the carriedParcel
         else if (type === 'pickup') {
             // Distance to reach the parcel (estimated by plan length)
             const dist_obj = this.#getIntentionDistance(intention, this.#beliefs.getMyPosition());
@@ -608,11 +608,17 @@ export class Intentions {
             const dist_deliver = this.#getIntentionDistance(next_deliver, { x: obj_x, y: obj_y });
             
             // Reward of the target parcel
-            const parcelReward = this.#beliefs.getVisibleParcels() 
+            let parcelReward = this.#beliefs.getVisibleParcels() 
                 .find(p => p.x === obj_x && p.y === obj_y)?.reward ?? 0;
 
-            // Net reward: parcel reward minus time cost (0.3 points per tile)
-            const possibleReward = parcelReward - dist_obj*TIME_COST_PER_TILE - dist_deliver*TIME_COST_PER_DELIVERY_TILE;
+            // Reward of carriedParcel, adding to reward of target parcel
+            const carriedParcels = this.#beliefs.getCarriedParcels();
+            carriedParcels.forEach(p => {
+                parcelReward += p.reward;
+            });
+
+            // Net reward: parcels reward minus time cost (0.3 points per tile)
+            const possibleReward = parcelReward - (dist_obj+dist_deliver)*TIME_COST_PER_TILE;
             if (DEBUG) console.log(`[SCORE] Intention: ${intention} dist_obj: ${dist_obj}, 
                     dist_deliver: ${dist_deliver}, parcelReward: ${parcelReward}, possibleReward: ${possibleReward} `);
             return possibleReward;
@@ -631,7 +637,7 @@ export class Intentions {
             if (DEBUG) console.log(`[SCORE] Futur Reward: ${totalReward}`);
 
             // Net reward: total reward minus time cost (0.3 points per tile)
-            return totalReward - dist_deliver * 0.3;
+            return totalReward - dist_deliver * TIME_COST_PER_TILE;
         }
 
         // --- Invalid intention ---
@@ -707,7 +713,8 @@ export class Intentions {
      */
     reconsider() {
         // No objective: always reconsider
-        if (!this.#currentObjective || this.#currentImpossibleIntentions.has(this.#currentObjective)) return true;
+        if (!this.#currentObjective || this.#currentImpossibleIntentions.has(this.#currentObjective)) 
+            return true;
 
         const parts  = this.#currentObjective.split('_');
         const type   = parts[0];
@@ -754,18 +761,27 @@ export class Intentions {
         // CASE 2: deliver in progress
         if (type === 'deliver') 
         {
+            // Reconsider if no carriedParcel
             if (this.#beliefs.getCarriedParcels().length === 0) {
                 console.log('[RECONSIDER] Nothing to deliver.');
                 return true;
             }
-            // Reconsider if a parcel pop-up, and if picking up this parcel bring a better score
-            const playerPos = this.#beliefs.getMyPosition();
-            if (myBeliefs.newParcels.length !=0) {
+
+            // When parcel popup in vision range, reconsider if picking up this parcel bring a better score
+            if (myBeliefs.newParcels.length > 0) {
                 console.log('[RECONSIDER] New close parcel appeared during deliver.');
                 const currentScore = this.getScoreOfIntention(myIntentions.getCurrentObjective());
-                // CONTINUE ICI POUR PRENDRE EN COMPTE LE SCORE DE FAIRE LE DETOUR POUR PICKUP LA PARCEL QUI EST APPARU
-                // FAUT MODIFIER GET SCORE OF INTENTION
-                return true;
+                // Check all the elements of newParcels
+                for (const parcel of myBeliefs.newParcels) {
+                    const newPossibleIntention = `pickup_${parcel.x}_${parcel.y}`;
+                    const pickupParcelScore = this.getScoreOfIntention(newPossibleIntention);
+
+                    // If a parcel can bring a better score
+                    if (pickupParcelScore && currentScore && (pickupParcelScore > currentScore)) {
+                        console.log('[RECONSIDER] Appeared parcel give better score');
+                        return true;
+                    }
+                }
             }
             return false;
         }
@@ -773,8 +789,7 @@ export class Intentions {
         // CASE 3: explore en cours
         if (type === 'explore')
         {
-            // Reconsidère SEULEMENT si une NOUVELLE parcel apparaît
-            // (pas si elle était déjà connue au sensing précédent)
+            // Reconsider only if a NEW  parcel apear
             if (myBeliefs.newParcels.length > 0)
             {
                 console.log('[RECONSIDER] New parcel appeared during explore.');
