@@ -5,8 +5,11 @@
  * @description Utility functions for pathfinding (e.g., A*, Dijkstra).
  * Note: 
  *******************************************************************************/
-import { myBeliefs } from "./agent_bdi.js";
-import { myIntentions} from "./agent_bdi.js";
+let beliefsInstance = null;
+
+export function setBeliefs(beliefs) {
+    beliefsInstance = beliefs;
+}
 
 /**
  * Generates a path from start to goal using A* algorithm, avoiding non-walkable tiles (type 0) and dynamic obstacles
@@ -18,15 +21,19 @@ export function generatePathTo(start, goal) {
     const startPos = { x: Math.round(start.x), y: Math.round(start.y) };
     const goalPos = { x: Math.round(goal.x), y: Math.round(goal.y) };
 
+    if (!beliefsInstance) {
+        throw new Error('Pathfinding requires beliefs instance via setBeliefs()');
+    }
+
     // Create a walkability grid from tiles
-    const walkable = new Array(myBeliefs.getMapWidth());
-    for (let x = 0; x < myBeliefs.getMapWidth(); x++) {
-        walkable[x] = new Array(myBeliefs.getMapHeight()).fill(true);
+    const walkable = new Array(beliefsInstance.getMapWidth());
+    for (let x = 0; x < beliefsInstance.getMapWidth(); x++) {
+        walkable[x] = new Array(beliefsInstance.getMapHeight()).fill(true);
     }
 
     // Mark non-walkable tiles (type "0") and build a tile lookup for directional rules
     const tilesByPosition = new Map();
-    myBeliefs.getTiles().forEach(tile => {
+    beliefsInstance.getTiles().forEach(tile => {
         tilesByPosition.set(`${tile.x},${tile.y}`, tile);
         if (tile.type === "0") {
             walkable[tile.x][tile.y] = false;
@@ -34,12 +41,12 @@ export function generatePathTo(start, goal) {
     });
 
      // Mark dynamic obstacles as non-walkable
-    if (myBeliefs.blockedTiles.size > 0 && walkable)
+    if (beliefsInstance?.blockedTiles.size > 0 && walkable)
     {
-        myBeliefs.blockedTiles.forEach(pos => {
+        beliefsInstance.blockedTiles.forEach(pos => {
             const [x, y] = pos.split('_').map(Number); // Convertit 'x_y' en {x, y}
-            if (x >= 0 && x < myBeliefs.getMapWidth() &&
-                y >= 0 && y < myBeliefs.getMapHeight()) {
+            if (x >= 0 && x < beliefsInstance.getMapWidth() &&
+                y >= 0 && y < beliefsInstance.getMapHeight()) {
                 walkable[x][y] = false;
             }
         });
@@ -48,9 +55,9 @@ export function generatePathTo(start, goal) {
     // A* algorithm
     const openSet = new Set();
     const closedSet = new Set();
-    const gScore = new Array(myBeliefs.getMapWidth()).fill(null).map(() => new Array(myBeliefs.getMapHeight()).fill(Infinity));
-    const fScore = new Array(myBeliefs.getMapWidth()).fill(null).map(() => new Array(myBeliefs.getMapHeight()).fill(Infinity));
-    const cameFrom = new Array(myBeliefs.getMapWidth()).fill(null).map(() => new Array(myBeliefs.getMapHeight()).fill(null));
+    const gScore = new Array(beliefsInstance.getMapWidth()).fill(null).map(() => new Array(beliefsInstance.getMapHeight()).fill(Infinity));
+    const fScore = new Array(beliefsInstance.getMapWidth()).fill(null).map(() => new Array(beliefsInstance.getMapHeight()).fill(Infinity));
+    const cameFrom = new Array(beliefsInstance.getMapWidth()).fill(null).map(() => new Array(beliefsInstance.getMapHeight()).fill(null));
 
     gScore[startPos.x][startPos.y] = 0;
     fScore[startPos.x][startPos.y] = heuristic(startPos, goalPos);
@@ -93,7 +100,7 @@ export function generatePathTo(start, goal) {
             const neighbor = { x: current.x + dir.dx, y: current.y + dir.dy };
 
             // Check boundaries
-            if (neighbor.x < 0 || neighbor.x >= myBeliefs.getMapWidth() || neighbor.y < 0 || neighbor.y >= myBeliefs.getMapHeight()) {
+            if (neighbor.x < 0 || neighbor.x >= beliefsInstance.getMapWidth() || neighbor.y < 0 || neighbor.y >= beliefsInstance.getMapHeight()) {
                 continue;
             }
 
@@ -129,8 +136,7 @@ export function generatePathTo(start, goal) {
     }
 
     // No path found
-    console.log(`[PATHFINDING] CurrentIntention impossible : aucun chemin valide vers (${goalPos.x},${goalPos.y})`);
-    myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
+    console.log(`[PATHFINDING] No valid path found towards (${goalPos.x},${goalPos.y})`);
     return [];
 }
 

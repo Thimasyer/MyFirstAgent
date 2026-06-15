@@ -1,12 +1,44 @@
-import { writeFile } from 'fs/promises';
+import { writeFile, readFile, unlink, access, constants as fsConstants } from 'fs/promises';
+import { spawn } from 'child_process';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 const MCP_ENDPOINT = 'https://solver.planning.domains/mcp';
 const MCP_PROTOCOL_VERSION = '2025-11-25';
 const MCP_CLIENT_NAME = 'node-pddl-agent';
 const DEFAULT_POLL_INTERVAL_S = 0.5;
-const DEFAULT_TIMEOUT_S = 30;
+const DEFAULT_TIMEOUT_S = 10;   // 10s - planner gets max 10s to solve
+const FETCH_TIMEOUT_MS = 15000; // 15 seconds for fetch (network + solving)
+const MAX_RETRIES = 1;          // Only 1 retry to avoid wasting time
+
+const LOCAL_FAST_DOWNWARD_ROOT = '/tmp/downward';
+const LOCAL_FAST_DOWNWARD_DRIVER = join(LOCAL_FAST_DOWNWARD_ROOT, 'fast-downward.py');
+const LOCAL_FAST_DOWNWARD_BUILD = 'release';
+const LOCAL_FAST_DOWNWARD_ALIAS = 'lama-first';
+const LOCAL_PLANNER_OVERALL_TIME_LIMIT_S = 10;
+const LOCAL_PLANNER_TIMEOUT_MS = 20000;
 
 export async function solveOnline(domain, problem) {
+  try {
+    await access(LOCAL_FAST_DOWNWARD_DRIVER, fsConstants.X_OK);
+    const localPlan = await solveLocal(domain, problem);
+    if (Array.isArray(localPlan) && localPlan.length > 0) {
+      console.log('[PDDL] Local planner returned a plan.');
+      return localPlan;
+    }
+    console.warn('[PDDL] Local planner returned no plan, falling back to remote solver.');
+  } catch (error) {
+    console.warn('[PDDL] Local planner unavailable or failed:', error.message);
+    console.warn('[PDDL] Falling back to remote solver.');
+  }
+
+  return solveRemote(domain, problem);
+}
+
+async function solveRemote(domain, problem) {
+  console.log('[PDDL] Requesting plan from solver (timeout: ' + DEFAULT_TIMEOUT_S + 's)...');
+  const startTime = Date.now();
+  
   const { sessionId } = await initializeSession();
   const toolResult = await callTool(sessionId, 'paas_lama_first_solve', {
     domain,
@@ -14,6 +46,9 @@ export async function solveOnline(domain, problem) {
     timeout_s: DEFAULT_TIMEOUT_S,
     poll_interval_s: DEFAULT_POLL_INTERVAL_S,
   });
+
+  const elapsedMs = Date.now() - startTime;
+  console.log(`[PDDL] Planner response received (${(elapsedMs / 1000).toFixed(2)}s)`);
 
   const parsedOutput = extractPlannerOutput(toolResult);
   if (typeof parsedOutput === 'string') {
@@ -24,6 +59,72 @@ export async function solveOnline(domain, problem) {
   }
 
   return [];
+}
+
+async function solveLocal(domain, problem) {
+  const domainFile = join(tmpdir(), `pddl_domain_${Date.now()}_${Math.random().toString(36).slice(2)}.pddl`);
+  const problemFile = join(tmpdir(), `pddl_problem_${Date.now()}_${Math.random().toString(36).slice(2)}.pddl`);
+  const planFile = join(tmpdir(), `pddl_plan_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`);
+
+  await writeFile(domainFile, domain);
+  await writeFile(problemFile, problem);
+
+  const args = [
+    LOCAL_FAST_DOWNWARD_DRIVER,
+    '--build', LOCAL_FAST_DOWNWARD_BUILD,
+    '--alias', LOCAL_FAST_DOWNWARD_ALIAS,
+    '--overall-time-limit', String(LOCAL_PLANNER_OVERALL_TIME_LIMIT_S),
+    '--plan-file', planFile,
+    domainFile,
+    problemFile,
+  ];
+
+  try {
+    await execFileAsync('python3', args, { timeout: LOCAL_PLANNER_TIMEOUT_MS });
+    const planText = await readFile(planFile, 'utf8');
+    return parsePlan(planText);
+  } finally {
+    for (const file of [domainFile, problemFile, planFile]) {
+      try {
+        await unlink(file);
+      } catch {
+        // ignore cleanup failures
+      }
+    }
+  }
+}
+
+function execFileAsync(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timeoutId;
+
+    if (child.stdout) {
+      child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    }
+    if (child.stderr) {
+      child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    }
+
+    child.on('error', reject);
+    child.on('close', code => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(`Local planner failed with exit code ${code}: ${stderr.trim() || stdout.trim()}`));
+      }
+    });
+
+    if (options.timeout) {
+      timeoutId = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error(`Local planner timed out after ${options.timeout}ms`));
+      }, options.timeout);
+    }
+  });
 }
 
 function extractPlannerOutput(toolResult) {
@@ -127,9 +228,13 @@ export function parsePlan(planLines) {
       }
       return line;
     })
+    .map(line => line.replace(/^[0-9]+:\s*/, '').trim())
     .map(line => line.replace(/^\(|\)$/g, '').trim())
     .filter(line => line.length > 0)
-    .map(line => line.toLowerCase());
+    .map(line => {
+      const tokens = line.split(/\s+/);
+      return tokens[0].toLowerCase();
+    });
 }
 
 async function initializeSession() {
@@ -182,43 +287,59 @@ async function callTool(sessionId, toolName, args) {
   return message.result;
 }
 
-async function sendMcpRequest(jsonRpcMessage, sessionId) {
-  const response = await fetch(MCP_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-      ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
-    },
-    body: JSON.stringify(jsonRpcMessage),
-  });
+async function sendMcpRequest(jsonRpcMessage, sessionId, retryCount = 0) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    
+    const response = await fetch(MCP_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+      },
+      body: JSON.stringify(jsonRpcMessage),
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeout);
 
-  const text = await response.text();
-  const sseMessages = parseSseStream(text);
-  if (process.env.DEBUG_PDDL) {
-    console.debug('[PDDL] MCP raw response text:', JSON.stringify(text));
-    console.debug('[PDDL] MCP parsed SSE messages:', JSON.stringify(sseMessages, null, 2));
+    const text = await response.text();
+    const sseMessages = parseSseStream(text);
+    if (process.env.DEBUG_PDDL) {
+      console.debug('[PDDL] MCP raw response text:', JSON.stringify(text));
+      console.debug('[PDDL] MCP parsed SSE messages:', JSON.stringify(sseMessages, null, 2));
+    }
+
+    if (!response.ok) {
+      const errorPayload = sseMessages.find(msg => msg.json)?.json ?? text;
+      throw new Error(`MCP request failed ${response.status} ${response.statusText}`);
+    }
+
+    if (sseMessages.length === 0) {
+      throw new Error(`MCP response had no message`);
+    }
+
+    const finalMessage = sseMessages.find(msg => msg.json && msg.json.jsonrpc === '2.0') ?? sseMessages[sseMessages.length - 1];
+    const json = finalMessage.json;
+    if (!json) {
+      throw new Error(`Unable to parse MCP response JSON`);
+    }
+
+    return {
+      ...json,
+      sessionId: response.headers.get('mcp-session-id') ?? undefined,
+    };
+  } catch (error) {
+    if (retryCount < MAX_RETRIES) {
+      const waitMs = 1000 * (retryCount + 1);
+      console.warn(`[PDDL] Request failed (attempt ${retryCount + 1}/${MAX_RETRIES + 1}), retrying in ${waitMs}ms...`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      return sendMcpRequest(jsonRpcMessage, sessionId, retryCount + 1);
+    }
+    throw error;
   }
-
-  if (!response.ok) {
-    const errorPayload = sseMessages.find(msg => msg.json)?.json ?? text;
-    throw new Error(`MCP request failed ${response.status} ${response.statusText}: ${JSON.stringify(errorPayload)}`);
-  }
-
-  if (sseMessages.length === 0) {
-    throw new Error(`MCP response had no message: ${text}`);
-  }
-
-  const finalMessage = sseMessages.find(msg => msg.json && msg.json.jsonrpc === '2.0') ?? sseMessages[sseMessages.length - 1];
-  const json = finalMessage.json;
-  if (!json) {
-    throw new Error(`Unable to parse MCP response JSON: ${text}`);
-  }
-
-  return {
-    ...json,
-    sessionId: response.headers.get('mcp-session-id') ?? undefined,
-  };
 }
 
 function parseSseStream(streamText) {
@@ -268,7 +389,7 @@ function parseSseStream(streamText) {
 }
 
 export function buildProblem(state) {
-  const { tiles, agent, parcels, goalTile } = state;
+  const { tiles, agent, parcels = [], goalTile, objective } = state;
 
   const tileNames = tiles.map((tile, index) => `t${index}`);
   const tileLookup = new Map(tiles.map((tile, index) => [`${tile.x},${tile.y}`, tileNames[index]]));
@@ -304,24 +425,64 @@ export function buildProblem(state) {
   adjacency.forEach(line => lines.push(`    ${line}`));
 
   parcels.forEach(parcel => {
-    const parcelTile = tileLookup.get(`${parcel.x},${parcel.y}`);
-    if (parcelTile) {
-      lines.push(`    (parcel-at ${parcel.id} ${parcelTile})`);
+    if (parcel.carried) {
+      lines.push(`    (has-parcel ${agent.id} ${parcel.id})`);
+    } else if (parcel.x != null && parcel.y != null) {
+      const parcelTile = tileLookup.get(`${parcel.x},${parcel.y}`);
+      if (parcelTile) {
+        lines.push(`    (parcel-at ${parcel.id} ${parcelTile})`);
+      }
     }
   });
+
+  if (state.blockedTiles && Array.isArray(state.blockedTiles)) {
+    state.blockedTiles.forEach(({ x, y }) => {
+      const tileName = tileLookup.get(`${x},${y}`);
+      if (tileName) {
+        lines.push(`    (not (free ${tileName}))`);
+      }
+    });
+  }
 
   lines.push('  )');
 
   lines.push('  (:goal (and');
-  if (goalTile) {
-    lines.push(`    (at ${agent.id} ${tileLookup.get(`${goalTile.x},${goalTile.y}`)})`);
-  }
-  if (parcels.some(p => p.pickup)) {
-    parcels.forEach(parcel => {
-      if (parcel.pickup) {
-        lines.push(`    (has-parcel ${agent.id} ${parcel.id})`);
+  if (objective) {
+    const goalTileName = objective.goalTile
+      ? tileLookup.get(`${objective.goalTile.x},${objective.goalTile.y}`)
+      : null;
+
+    if (objective.type === 'pickup') {
+      if (goalTileName) {
+        lines.push(`    (at ${agent.id} ${goalTileName})`);
       }
-    });
+      if (objective.parcelId) {
+        lines.push(`    (has-parcel ${agent.id} ${objective.parcelId})`);
+      }
+    } else if (objective.type === 'deliver') {
+      if (goalTileName) {
+        lines.push(`    (at ${agent.id} ${goalTileName})`);
+      }
+      const carriedIds = objective.carriedParcelIds || [];
+      carriedIds.forEach(parcelId => {
+        lines.push(`    (not (has-parcel ${agent.id} ${parcelId}))`);
+      });
+    } else if (objective.type === 'explore') {
+      if (goalTileName) {
+        lines.push(`    (at ${agent.id} ${goalTileName})`);
+      }
+    }
+  } else {
+    if (goalTile) {
+      lines.push(`    (at ${agent.id} ${tileLookup.get(`${goalTile.x},${goalTile.y}`)})`);
+    }
+    if (parcels.some(p => p.pickup)) {
+      parcels.forEach(parcel => {
+        if (parcel.pickup) {
+          lines.push(`    (has-parcel ${agent.id} ${parcel.id})`);
+        }
+      });
+    }
   }
   lines.push('  ))');
   lines.push(')');

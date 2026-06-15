@@ -10,14 +10,14 @@
 //                serve as input for the intention formation process.
 // TODO:          
 /*******************************************************************************/
-import { DEBUG } from './agent_bdi.js';
+const DEBUG = false;
 import { Beliefs } from './beliefs.js';
 
 export class Desires {
     /** @type {Beliefs} */
     #beliefs;
 
-    /** @type {import('./intentions.js').Intentions|null} */
+    /** @type {object|null} */
     #intentions = null;
 
     /** @type {Set<string>} */

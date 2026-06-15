@@ -21,7 +21,7 @@ import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
 import { Beliefs } from './beliefs.js';
 import { Desires } from './desires.js';
 import { Intentions } from './intentions.js';
-import { generatePathTo } from "./pathfinding.js";
+import { generatePathTo, setBeliefs } from "./pathfinding.js";
 import { registerTool, runAgentTurn } from "./use_LLM.js";
 import { calculate, 
     get_current_time, 
@@ -44,6 +44,7 @@ const DEBUG = false;
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const myBeliefs = new Beliefs();
+setBeliefs(myBeliefs);
 const myDesires = new Desires(myBeliefs);
 const myIntentions = new Intentions(myDesires, myBeliefs, generatePathTo);
 myDesires.setLinkedIntentions(myIntentions); // create circular reference for dynamic updates

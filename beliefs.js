@@ -11,7 +11,6 @@
 //                as the foundation for the BDI model's decision-making process.
 // TODO:          
 
-import { myBeliefs } from "./agent_bdi.js";
 
 /*******************************************************************************/
 export class Beliefs {
@@ -414,8 +413,8 @@ export class Beliefs {
     updateCratePos(direction)
     {
         // Calculate the current position of the agent
-        const currentX = myBeliefs.getMyPosition().x;
-        const currentY = myBeliefs.getMyPosition().y;
+        const currentX = this.getMyPosition().x;
+        const currentY = this.getMyPosition().y;
 
         // Calculate the next position of the agent (where the crate is currently)
         let crateX = currentX;
@@ -443,19 +442,19 @@ export class Beliefs {
 
         // Remove the old crate position from the set
         const oldCratePos = `${crateX}_${crateY}`;
-        myBeliefs.cratesPosition.delete(oldCratePos);
+        this.cratesPosition.delete(oldCratePos);
 
         // Add the new crate position to the set
         const newCratePos = `${newCrateX}_${newCrateY}`;
-        myBeliefs.cratesPosition.add(newCratePos);
+        this.cratesPosition.add(newCratePos);
     }
 
     /** Check if the agent will go through a crate
      *  @param {String} direction*/
     IsCrateOnMyRoad(direction) {
         // myNextPosition
-        let x_next = myBeliefs.getMyPosition().x;
-        let y_next = myBeliefs.getMyPosition().y;
+        let x_next = this.getMyPosition().x;
+        let y_next = this.getMyPosition().y;
         switch (direction)
         {
             case ' up':    y_next += 1; break;
@@ -466,9 +465,9 @@ export class Beliefs {
         console.log('Just in case your dumb, direction:', direction);
 
         // Check if the next position matches any crate position
-        for (const c of myBeliefs.cratesPosition)
+        for (const c of this.cratesPosition)
         {
-            console.log('cratesPosition is: ', myBeliefs.cratesPosition, 'VS myNextPos: ', {x_next, y_next});
+            console.log('cratesPosition is: ', this.cratesPosition, 'VS myNextPos: ', {x_next, y_next});
             const [c_x, c_y] = c.split('_').map(Number);
             if (c_x === x_next && c_y === y_next)
             {
