@@ -327,12 +327,16 @@ class PDDLIntentions {
       return { x, y };
     });
 
+    const visibleAgentBlockedTiles = this.#beliefs.getVisibleAgents()
+      .filter(a => a.id !== this.#beliefs.getMyId())
+      .map(agentInfo => ({ x: agentInfo.x, y: agentInfo.y }));
+
     const state = {
       tiles: this.#beliefs.getTiles(),
       agent,
       parcels: [...visibleParcels, ...carriedParcels],
       objective: objectiveSpec,
-      blockedTiles
+      blockedTiles: [...blockedTiles, ...visibleAgentBlockedTiles]
     };
 
     try {

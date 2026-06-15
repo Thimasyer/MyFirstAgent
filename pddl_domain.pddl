@@ -2,6 +2,8 @@
   (:requirements :strips :typing)
   (:types agent tile parcel direction)
 
+  (:constants up down left right - direction)
+
   (:predicates
     (at ?a - agent ?t - tile)
     (connected ?t1 - tile ?t2 - tile ?dir - direction)
@@ -11,8 +13,6 @@
     (delivery-tile ?t - tile)
     (allowed-entry ?t - tile ?dir - direction)
   )
-
-  (:constants up down left right - direction)
 
   (:action move-up
     :parameters (?a - agent ?from - tile ?to - tile)

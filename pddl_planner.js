@@ -65,6 +65,7 @@ async function solveLocal(domain, problem) {
   const domainFile = join(tmpdir(), `pddl_domain_${Date.now()}_${Math.random().toString(36).slice(2)}.pddl`);
   const problemFile = join(tmpdir(), `pddl_problem_${Date.now()}_${Math.random().toString(36).slice(2)}.pddl`);
   const planFile = join(tmpdir(), `pddl_plan_${Date.now()}_${Math.random().toString(36).slice(2)}.txt`);
+  const sasFile = join(tmpdir(), `pddl_sas_${Date.now()}_${Math.random().toString(36).slice(2)}.sas`);
 
   await writeFile(domainFile, domain);
   await writeFile(problemFile, problem);
@@ -75,6 +76,8 @@ async function solveLocal(domain, problem) {
     '--alias', LOCAL_FAST_DOWNWARD_ALIAS,
     '--overall-time-limit', String(LOCAL_PLANNER_OVERALL_TIME_LIMIT_S),
     '--plan-file', planFile,
+    '--sas-file', sasFile,
+    '--keep-sas-file',
     domainFile,
     problemFile,
   ];
@@ -84,7 +87,7 @@ async function solveLocal(domain, problem) {
     const planText = await readFile(planFile, 'utf8');
     return parsePlan(planText);
   } finally {
-    for (const file of [domainFile, problemFile, planFile]) {
+    for (const file of [domainFile, problemFile, planFile, sasFile]) {
       try {
         await unlink(file);
       } catch {
@@ -408,9 +411,19 @@ export function buildProblem(state) {
   lines.push('  (:init');
   lines.push(`    (at ${agent.id} ${tileLookup.get(`${agent.x},${agent.y}`)})`);
 
+  const blockedTileNames = new Set();
+  if (state.blockedTiles && Array.isArray(state.blockedTiles)) {
+    state.blockedTiles.forEach(({ x, y }) => {
+      const tileName = tileLookup.get(`${x},${y}`);
+      if (tileName) {
+        blockedTileNames.add(tileName);
+      }
+    });
+  }
+
   tiles.forEach(tile => {
     const tid = tileLookup.get(`${tile.x},${tile.y}`);
-    if (tile.type !== '0') {
+    if (tile.type !== '0' && !blockedTileNames.has(tid)) {
       lines.push(`    (free ${tid})`);
     }
     if (tile.type === '2') {
@@ -435,14 +448,9 @@ export function buildProblem(state) {
     }
   });
 
-  if (state.blockedTiles && Array.isArray(state.blockedTiles)) {
-    state.blockedTiles.forEach(({ x, y }) => {
-      const tileName = tileLookup.get(`${x},${y}`);
-      if (tileName) {
-        lines.push(`    (not (free ${tileName}))`);
-      }
-    });
-  }
+  blockedTileNames.forEach(tileName => {
+    lines.push(`    (not (free ${tileName}))`);
+  });
 
   lines.push('  )');
 
