@@ -16,7 +16,7 @@ if (!socket) {
 let mapTiles = [];
 let agentState = { id: 'agent1', x: 0, y: 0 };
 let parcels = [];
-let goalTile = null;
+let goalTile = {x:3, y:3};
 let currentPlan = [];
 let isExecuting = false;
 

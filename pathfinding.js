@@ -34,7 +34,7 @@ export function generatePathTo(start, goal) {
     });
 
      // Mark dynamic obstacles as non-walkable
-    if (myBeliefs.blockedTiles.size > 0)
+    if (myBeliefs.blockedTiles.size > 0 && walkable)
     {
         myBeliefs.blockedTiles.forEach(pos => {
             const [x, y] = pos.split('_').map(Number); // Convertit 'x_y' en {x, y}
@@ -131,7 +131,6 @@ export function generatePathTo(start, goal) {
     // No path found
     console.log(`[PATHFINDING] CurrentIntention impossible : aucun chemin valide vers (${goalPos.x},${goalPos.y})`);
     myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
-    myIntentions.clearPlan(); // clear plan to trigger re-planning
     return [];
 }
 

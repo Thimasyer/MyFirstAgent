@@ -202,7 +202,7 @@ export class Intentions {
         }
 
         // CASE 3: Fallback to exploration if no pickup or deliver is available
-        if (explores.length > 0) {
+        if (explores.length > 0 && this.#beliefs.getVisibleParcels().length === 0) {
             // Filtrer toutes les intentions explore non visitées et hors du champ de vision
             const outsideExplores = explores.filter(e => {
                 const e_parts = e.split('_');
@@ -405,6 +405,12 @@ export class Intentions {
                 }
                 if (1) console.log(`      [ACTION] Moved ${direction}. My Position is `, myBeliefs.getMyPosition());
                 this.getNextAction(); // shift only on success
+
+                // When moved right on a crates, updates crates position. 
+                if (myBeliefs.IsCrateOnMyRoad(direction)) {
+                    if (1) console.log('----- updateCrates ---------')
+                    myBeliefs.updateCratePos(direction);
+                }
                 
             }
             else

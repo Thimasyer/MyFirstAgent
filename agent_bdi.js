@@ -188,6 +188,7 @@ socket.on('map', (height, width, tiles) => {
     // define the static data in belief
     myBeliefs.defineDeliveryPoint(myBeliefs.getTiles());
     myBeliefs.defineSpawnPoint(myBeliefs.getTiles());
+   // myBeliefs.defineCratesPosition(myBeliefs.getTiles());
 });
 
 /** ───────────────────────────────────────────────────────────────
@@ -231,6 +232,8 @@ socket.onSensing(async (data) => {
         x: a.x ?? 0,
         y: a.y ?? 0
     }));
+
+    console.log('-- Crates --', data.crates);
     // used later for reconsider()
     myBeliefs.updatePercepts(parcels, agents);
 
@@ -260,6 +263,7 @@ socket.onSensing(async (data) => {
 async function core_loop()
 {
     if (DEBUG) console.log("[IfBlock1] Special Mission: ", myBeliefs.getSpecialMissions());
+    if (1) console.log('[IfBlock1] Crates Position: ', myBeliefs.cratesPosition)
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) // ET SI ON ENLEVE CETTE CONDITON C PTETRE PLUS FACILE?
@@ -280,6 +284,7 @@ async function core_loop()
         if (currentIntentionBlocked) {
             console.log('[ElseBlock1] ERROR: All intentions blocked, cleaning plan...')
             myIntentions.clearPlan();
+            myIntentions.clearCurrentImpossibleIntentions();
         }
     }
     
@@ -304,7 +309,7 @@ async function core_loop()
             isExecuting = true;
             try
             {
-                await myIntentions.executeNextAction();
+                const moved = await myIntentions.executeNextAction();
             }
             finally
             {
