@@ -27,10 +27,10 @@ import { calculate,
     get_current_time, 
     get_me_info, move, 
     getScoreOfIntention,
-    getCurrentObjective,
+    getCurrentIntention,
     setIntention,
     getTiles,
-    checkformatAndAddSpecialMission,
+    //checkformatAndAddSpecialMission,
 } from "./tools_LLM.js";
 
 
@@ -59,7 +59,7 @@ registerTool("get_current_time", get_current_time);
 registerTool("get_me_info", get_me_info);
 registerTool("move", move);
 registerTool("getScoreOfIntention", getScoreOfIntention);
-registerTool("getCurrentObjective", getCurrentObjective);
+registerTool("getCurrentObjective", getCurrentIntention);
 registerTool("setIntention", async (strInput) => {
     const result = await setIntention(strInput);
     if (result.startsWith("accepted")) {
@@ -280,8 +280,8 @@ async function core_loop()
     } 
     else {
 
-        if (1) console.log('[ElseBlock1] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
-        const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentObjective());
+        if (1) console.log('[ElseBlock1] Existing plan for \'' + myIntentions.getCurrentIntention() + '\':', myIntentions.getPlan());
+        const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentIntention());
         if (currentIntentionBlocked) {
             console.log('[ElseBlock1] ERROR: All intentions blocked, cleaning plan...')
             myIntentions.clearPlan();
@@ -299,8 +299,8 @@ async function core_loop()
 
     if (shouldContinue)
     {
-        const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentObjective()); // for debug and analysis, not used for decision
-        if (1) console.log(`[IfBlock2] Score for current objective '${myIntentions.getCurrentObjective()}': ${score}`);
+        const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentIntention()); // for debug and analysis, not used for decision
+        if (1) console.log(`[IfBlock2] Score for current objective '${myIntentions.getCurrentIntention()}': ${score}`);
         
         // ******** Line 11+12 Execute action ****************
         // guard, for preventing launching several action in parallel 
@@ -355,8 +355,8 @@ async function core_loop()
         }
         else if (myIntentions.succeeded()) {
             if (1) console.log('[ElseBlock2] Current intention \'' 
-                + myIntentions.getCurrentObjective() + '\' already succeeded');
-            if (myIntentions.getCurrentObjective().startsWith('explore')) {
+                + myIntentions.getCurrentIntention() + '\' already succeeded');
+            if (myIntentions.getCurrentIntention().startsWith('explore')) {
                 myIntentions.shiftIntention();
                 myIntentions.setPlan();
             } else {
@@ -365,10 +365,10 @@ async function core_loop()
         }
         else if (myIntentions.impossible()) {
             if (DEBUG) console.log('[ElseBlock2]: Current intention \'' 
-                + myIntentions.getCurrentObjective() + '\' is impossible');
+                + myIntentions.getCurrentIntention() + '\' is impossible');
                 myIntentions.clearPlan();
                 // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
-                myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
+                myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentIntention());
                 
         }
     }

@@ -41,7 +41,7 @@ export class Beliefs {
      /** @type {Set<string>} type x_y, Dynamic obstacles to avoid, cleared regurlary */
     blockedTiles = new Set();
 
-     /** @type {Set<string>} type x_y, crates obstacles to avoid, never cleared */
+    // TODOOOOO
     cratesPosition = new Set();
 
     /** @type {number} */
@@ -68,7 +68,7 @@ export class Beliefs {
     /** @type {Set<string>} IDs des agents connus au sensing précédent */
     #knownAgentIds = new Set();
 
-    /** @type {Object[]} Special missions received from the server */
+    /** @type {Array<string>} Special missions received from the server */
     #specialMissions= [];
 
     /** @type {Array<{id: string, x: number, y: number, reward: number}>} */
@@ -388,95 +388,6 @@ export class Beliefs {
         console.log(`[MAP] Spawn points found: ${this.#spawnPoint.length}`);
     }
 
-    /**
-     * Defines crates points (type = "5!") based on map tiles.
-     * @param {Array<{x: number, y: number, type: string}>} tiles
-     */
-    defineCratesPosition(tiles) {
-        const cratesPos = tiles
-            .filter(t => t.type === "5!")
-            .map(t => ({
-                x: t.x,
-                y: t.y
-            }));
-
-        cratesPos.forEach(c => {this.cratesPosition.add(c.x.toString() + '_' + c.y.toString())}) 
-
-        console.log(`[MAP] Crates found: ${this.cratesPosition.size} in: `, this.cratesPosition);
-    }
-
-    /**
-     * Updates the position of a crate after it has been pushed in the given direction.
-     * Assumes that the crate is at the agent's current position + 1 step in the given direction.
-     * @param {string} direction - Direction of movement ('up', 'down', 'left', 'right').
-     */
-    updateCratePos(direction)
-    {
-        // Calculate the current position of the agent
-        const currentX = this.getMyPosition().x;
-        const currentY = this.getMyPosition().y;
-
-        // Calculate the next position of the agent (where the crate is currently)
-        let crateX = currentX;
-        let crateY = currentY;
-
-        switch (direction)
-        {
-            case 'up':    crateY += 1; break;
-            case 'down':  crateY -= 1; break;
-            case 'right': crateX += 1; break;
-            case 'left':  crateX -= 1; break;
-        }
-
-        // Calculate the new position of the crate (pushed one step further)
-        let newCrateX = crateX;
-        let newCrateY = crateY;
-
-        switch (direction)
-        {
-            case 'up':    newCrateY += 1; break;
-            case 'down':  newCrateY -= 1; break;
-            case 'right': newCrateX += 1; break;
-            case 'left':  newCrateX -= 1; break;
-        }
-
-        // Remove the old crate position from the set
-        const oldCratePos = `${crateX}_${crateY}`;
-        this.cratesPosition.delete(oldCratePos);
-
-        // Add the new crate position to the set
-        const newCratePos = `${newCrateX}_${newCrateY}`;
-        this.cratesPosition.add(newCratePos);
-    }
-
-    /** Check if the agent will go through a crate
-     *  @param {String} direction*/
-    IsCrateOnMyRoad(direction) {
-        // myNextPosition
-        let x_next = this.getMyPosition().x;
-        let y_next = this.getMyPosition().y;
-        switch (direction)
-        {
-            case ' up':    y_next += 1; break;
-            case ' down':  y_next -= 1; break;
-            case ' right': x_next += 1; break;
-            case ' left':  x_next -= 1; break;
-        }
-        console.log('Just in case your dumb, direction:', direction);
-
-        // Check if the next position matches any crate position
-        for (const c of this.cratesPosition)
-        {
-            console.log('cratesPosition is: ', this.cratesPosition, 'VS myNextPos: ', {x_next, y_next});
-            const [c_x, c_y] = c.split('_').map(Number);
-            if (c_x === x_next && c_y === y_next)
-            {
-                return true;
-            }
-        }
-        return false;
-
-    }
 
     // ****************************************************************************
     // Setter fonction for map properties

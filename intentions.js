@@ -368,6 +368,12 @@ export class Intentions {
         // No action needed for explore, just reach the location
         this.#plan = path;
     }
+
+    // used for LLM tools.
+    /** @param {Array<string>} plan */
+    setForcePlan(plan) {
+        this.#plan = plan;
+    }
     
     /**
      * Executes the next action in the intentions plan.
@@ -379,6 +385,7 @@ export class Intentions {
         if (this.getFilteredIntentions().length) {
             if (DEBUG) console.log('      [EXECUTENEXTECTION]: Filtered intention', this.getFilteredIntentions()) }
         const action = this.getPlan()[0];
+        console.log('actionnnnn', action);
         if (!action) return;
 
         // ── MOVE ──────────────────────────────────────────────────
@@ -403,25 +410,19 @@ export class Intentions {
                     myBeliefs.blockedTiles.clear();
                     if (DEBUG) console.log('      [ACTION] blockedTiles cleared')
                 }
-                if (1) console.log(`      [ACTION] Moved ${direction}. My Position is `, myBeliefs.getMyPosition());
+                if (DEBUG) console.log(`      [ACTION] Moved ${direction}. My Position is `, myBeliefs.getMyPosition());
                 this.getNextAction(); // shift only on success
-
-                // When moved right on a crates, updates crates position. 
-                if (myBeliefs.IsCrateOnMyRoad(direction)) {
-                    if (1) console.log('----- updateCrates ---------')
-                    myBeliefs.updateCratePos(direction);
-                }
                 
             }
             else
             {
-                if (1) console.log(`      [ACTION] Move ${direction} failed, will retry.
+                if (DEBUG) console.log(`      [ACTION] Move ${direction} failed, will retry.
                      My Position is `, myBeliefs.getMyPosition());
                 
                 // after 3 failed action, replan  with blocked tiles
                 if(this.recordFailedAction(action))
                 {
-                    if (DEBUG) console.log('      [ACTION] 3 failed action recorded')
+                    if (1) console.log('      [ACTION] 3 failed action recorded')
                     // get the blocked tiles
                     let x = myBeliefs.getMyPosition().x;
                     let y = myBeliefs.getMyPosition().y;
@@ -567,7 +568,7 @@ export class Intentions {
      * Gets the current objective.
      * @returns {string}
      */
-    getCurrentObjective() {
+    getCurrentIntention() {
         if (this.#currentObjective) return this.#currentObjective;
         else return 'undefined or null'
     }
@@ -776,7 +777,7 @@ export class Intentions {
             // When parcel popup in vision range, reconsider if picking up this parcel bring a better score
             if (myBeliefs.newParcels.length > 0) {
                 console.log('[RECONSIDER] New close parcel appeared during deliver.');
-                const currentScore = this.getScoreOfIntention(myIntentions.getCurrentObjective());
+                const currentScore = this.getScoreOfIntention(myIntentions.getCurrentIntention());
                 // Check all the elements of newParcels
                 for (const parcel of myBeliefs.newParcels) {
                     const newPossibleIntention = `pickup_${parcel.x}_${parcel.y}`;

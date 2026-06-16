@@ -27,10 +27,14 @@ import { calculate,
     get_current_time, 
     get_me_info, move, 
     getScoreOfIntention,
-    getCurrentObjective,
+    getCurrentIntention,
     setIntention,
     getTiles,
-    checkformatAndAddSpecialMission,
+    addSpecialMission,
+    getBeliefs,
+    getSpecialMissions,
+    setPlanByLLM,
+    //checkformatAndAddSpecialMission,
 } from "./tools_LLM.js";
 
 
@@ -59,7 +63,7 @@ registerTool("get_current_time", get_current_time);
 registerTool("get_me_info", get_me_info);
 registerTool("move", move);
 registerTool("getScoreOfIntention", getScoreOfIntention);
-registerTool("getCurrentObjective", getCurrentObjective);
+registerTool("getCurrentIntention", getCurrentIntention);
 registerTool("setIntention", async (strInput) => {
     const result = await setIntention(strInput);
     if (result.startsWith("accepted")) {
@@ -74,47 +78,51 @@ registerTool("setIntention", async (strInput) => {
     }
 });
 registerTool("getTiles", getTiles);
-registerTool("checkformatAndAddSpecialMission", async (strJSON) =>
-    {
-        // Appel de la fonction de validation et d'ajout
-        const result = await checkformatAndAddSpecialMission(strJSON);
+registerTool("addSpecialMission", addSpecialMission);
+registerTool("getBeliefs", getBeliefs);
+registerTool("getSpecialMissions", getSpecialMissions);
+registerTool("setPlanByLLM", setPlanByLLM);
+// registerTool("checkformatAndAddSpecialMission", async (strJSON) =>
+//     {
+//         // Appel de la fonction de validation et d'ajout
+//         const result = await checkformatAndAddSpecialMission(strJSON);
 
-        // Vérification du résultat et affichage des missions stockées
-        if (result === false)
-        {
-            console.error("[checkformatAndAddSpecialMission] Invalid mission format.");
-            return "Error: Invalid mission format. Check JSON structure and required fields.";
-        }
-        else if (result.startsWith("duplicate_id:"))
-        {
-            const strMissionId = result.split(":")[1];
-            console.warn(`[checkformatAndAddSpecialMission] Duplicate mission ID: ${strMissionId}`);
-            return `Warning: Mission with ID "${strMissionId}" already exists.`;
-        }
-        else if (result.startsWith("duplicate_semantic:"))
-        {
-            const strDescription = result.split(":")[1].replace(/"/g, "");
-            console.warn(`[checkformatAndAddSpecialMission] Duplicate semantic mission: ${strDescription}`);
-            return `Warning: A similar mission already exists: "${strDescription}".`;
-        }
-        else if (result.startsWith("stored:"))
-        {
-            const strMissionId = result.split(":")[1];
-            console.log(`[checkformatAndAddSpecialMission] Mission stored: ${strMissionId}`);
+//         // Vérification du résultat et affichage des missions stockées
+//         if (result === false)
+//         {
+//             console.error("[checkformatAndAddSpecialMission] Invalid mission format.");
+//             return "Error: Invalid mission format. Check JSON structure and required fields.";
+//         }
+//         else if (result.startsWith("duplicate_id:"))
+//         {
+//             const strMissionId = result.split(":")[1];
+//             console.warn(`[checkformatAndAddSpecialMission] Duplicate mission ID: ${strMissionId}`);
+//             return `Warning: Mission with ID "${strMissionId}" already exists.`;
+//         }
+//         else if (result.startsWith("duplicate_semantic:"))
+//         {
+//             const strDescription = result.split(":")[1].replace(/"/g, "");
+//             console.warn(`[checkformatAndAddSpecialMission] Duplicate semantic mission: ${strDescription}`);
+//             return `Warning: A similar mission already exists: "${strDescription}".`;
+//         }
+//         else if (result.startsWith("stored:"))
+//         {
+//             const strMissionId = result.split(":")[1];
+//             console.log(`[checkformatAndAddSpecialMission] Mission stored: ${strMissionId}`);
 
-            // Affichage des missions stockées dans les beliefs
-            const arrSpecialMissions = myBeliefs.getSpecialMissions();
-            console.log("[Special Missions in Beliefs]:", JSON.stringify(arrSpecialMissions, null, 2));
+//             // Affichage des missions stockées dans les beliefs
+//             const arrSpecialMissions = myBeliefs.getSpecialMissions();
+//             console.log("[Special Missions in Beliefs]:", JSON.stringify(arrSpecialMissions, null, 2));
 
-            return `Success: Mission "${strMissionId}" stored. Waiting for confirmation to apply changes.`;
-        }
-        else
-        {
-            console.error(`[checkformatAndAddSpecialMission] Unexpected result: ${result}`);
-            return `Error: Unexpected result from mission validation.`;
-        }
-    }
-);
+//             return `Success: Mission "${strMissionId}" stored. Waiting for confirmation to apply changes.`;
+//         }
+//         else
+//         {
+//             console.error(`[checkformatAndAddSpecialMission] Unexpected result: ${result}`);
+//             return `Error: Unexpected result from mission validation.`;
+//         }
+//     }
+// );
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 let lastSensingTime = Date.now();
@@ -234,7 +242,7 @@ socket.onSensing(async (data) => {
         y: a.y ?? 0
     }));
 
-    console.log('-- Crates --', data.crates);
+
     // used later for reconsider()
     myBeliefs.updatePercepts(parcels, agents);
 
@@ -264,7 +272,7 @@ socket.onSensing(async (data) => {
 async function core_loop()
 {
     if (DEBUG) console.log("[IfBlock1] Special Mission: ", myBeliefs.getSpecialMissions());
-    if (1) console.log('[IfBlock1] Crates Position: ', myBeliefs.cratesPosition)
+    if (DEBUG) console.log('[IfBlock1] Crates Position: ', myBeliefs.cratesPosition)
     // look course n°4: BDI Loop diapo 35, agent control loop v7
     // *********** Line 5 to 9  ******************************    
     if (myIntentions.getPlan().length === 0) // ET SI ON ENLEVE CETTE CONDITON C PTETRE PLUS FACILE?
@@ -273,15 +281,15 @@ async function core_loop()
         myDesires.genOption();
         myIntentions.desiresToIntention();
         myIntentions.filterAndSortIntention();
-        if (1) console.log('[IfBlock1] Filtered intentions:', myIntentions.getFilteredIntentions());
+        if (DEBUG) console.log('[IfBlock1] Filtered intentions:', myIntentions.getFilteredIntentions());
         myIntentions.setPlan();
         if (DEBUG) console.log('[IfBlock1] Generated plan:', myIntentions.getPlan());
         if (DEBUG) console.log('[IfBlock1] ImpossibleIntentions: ', myIntentions.getCurrentImpossibleIntentions());
     } 
     else {
 
-        if (1) console.log('[ElseBlock1] Existing plan for \'' + myIntentions.getCurrentObjective() + '\':', myIntentions.getPlan());
-        const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentObjective());
+        if (DEBUG) console.log('[ElseBlock1] Existing plan for \'' + myIntentions.getCurrentIntention() + '\':', myIntentions.getPlan());
+        const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentIntention());
         if (currentIntentionBlocked) {
             console.log('[ElseBlock1] ERROR: All intentions blocked, cleaning plan...')
             myIntentions.clearPlan();
@@ -299,8 +307,8 @@ async function core_loop()
 
     if (shouldContinue)
     {
-        const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentObjective()); // for debug and analysis, not used for decision
-        if (1) console.log(`[IfBlock2] Score for current objective '${myIntentions.getCurrentObjective()}': ${score}`);
+        const score = myIntentions.getScoreOfIntention(myIntentions.getCurrentIntention()); // for debug and analysis, not used for decision
+        if (DEBUG) console.log(`[IfBlock2] Score for current objective '${myIntentions.getCurrentIntention()}': ${score}`);
         
         // ******** Line 11+12 Execute action ****************
         // guard, for preventing launching several action in parallel 
@@ -322,16 +330,16 @@ async function core_loop()
 
         // Belief and perception always update
         // ******** Line 16 Reconsider ***********************
-        if (1) console.log('[IfBlock3] Trigger reconsideration based on delta: nAgent, nParcels, goneAgents, goneParcles',
+        if (DEBUG) console.log('[IfBlock3] Trigger reconsideration based on delta: nAgent, nParcels, goneAgents, goneParcles',
              myBeliefs.newAgents, myBeliefs.newParcels, myBeliefs.goneAgentsIds, myBeliefs.goneParcelsIDs);
         let planInvalidAfterReconsider = 0;
         if (myIntentions.reconsider())
         {
             myDesires.genOption();
-            if (1) console.log('   [IfBlock3.1] Desires:', myDesires.getDesires());
+            if (DEBUG) console.log('   [IfBlock3.1] Desires:', myDesires.getDesires());
             myIntentions.desiresToIntention();
             myIntentions.filterAndSortIntention();
-            if (1) console.log('   [IfBlock3.1] Filtered and sorted intention:', myIntentions.getFilteredIntentions());
+            if (DEBUG) console.log('   [IfBlock3.1] Filtered and sorted intention:', myIntentions.getFilteredIntentions());
             planInvalidAfterReconsider = 1
         }
 
@@ -339,10 +347,10 @@ async function core_loop()
         // replan if plan invalide
         if (!myIntentions.isPlanValid() || planInvalidAfterReconsider)
         {
-            if (1) console.log('[IfBlock4] Plan invalid, replanning...');
+            if (DEBUG) console.log('[IfBlock4] Plan invalid, replanning...');
             if (myIntentions.getFilteredIntentions().length > 0)
             {
-                if (1) console.log('   [IfBlock4.1] SetPlan');
+                if (DEBUG) console.log('   [IfBlock4.1] SetPlan');
                 myIntentions.clearPlan();
                 myIntentions.setPlan();
             }
@@ -354,9 +362,9 @@ async function core_loop()
             if (DEBUG) console.log('[EsleBlock2]: Plan is empty');
         }
         else if (myIntentions.succeeded()) {
-            if (1) console.log('[ElseBlock2] Current intention \'' 
-                + myIntentions.getCurrentObjective() + '\' already succeeded');
-            if (myIntentions.getCurrentObjective().startsWith('explore')) {
+            if (DEBUG) console.log('[ElseBlock2] Current intention \'' 
+                + myIntentions.getCurrentIntention() + '\' already succeeded');
+            if (myIntentions.getCurrentIntention().startsWith('explore')) {
                 myIntentions.shiftIntention();
                 myIntentions.setPlan();
             } else {
@@ -365,10 +373,10 @@ async function core_loop()
         }
         else if (myIntentions.impossible()) {
             if (DEBUG) console.log('[ElseBlock2]: Current intention \'' 
-                + myIntentions.getCurrentObjective() + '\' is impossible');
+                + myIntentions.getCurrentIntention() + '\' is impossible');
                 myIntentions.clearPlan();
                 // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
-                myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentObjective());
+                myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentIntention());
                 
         }
     }
