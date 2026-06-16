@@ -288,6 +288,10 @@ class PDDLIntentions {
       this.#plan = [];
     }
 
+    if (this.#plan.length > 0) {
+      console.log('[PDDL] Plan received:', this.#plan);
+    }
+
     if (this.#plan.length === 0) {
       this.setCurrentImpossibleIntentions(objective);
     }

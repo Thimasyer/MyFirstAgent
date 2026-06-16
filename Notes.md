@@ -45,3 +45,15 @@ En tout cas pour le moment ça fonctionne même si on lance plusieurs action en 
 - 
 
 
+node agent_pddl.js -> use fast-downward planner
+PDDL_USE_DOCKER=true node agent_pddl.js -> use docker
+
+
+to use docker (ubuntu) : 
+- sudo apt install -y docker.io docker-compose
+- sudo systemctl enable docker
+- sudo systemctl start docker
+- git clone https://github.com/AI-Planning/planning-as-a-service.git
+- cd planning-as-a-service/server
+- cp .env.example .env
+- sudo make

@@ -18,7 +18,19 @@ const LOCAL_FAST_DOWNWARD_ALIAS = 'lama-first';
 const LOCAL_PLANNER_OVERALL_TIME_LIMIT_S = 10;
 const LOCAL_PLANNER_TIMEOUT_MS = 20000;
 
+const USE_DOCKER_PAAS = process.env.PDDL_USE_DOCKER === 'true' || process.env.PDDL_USE_DOCKER === '1';
+const DOCKER_PAAS_BASE_URL = process.env.PDDL_DOCKER_URL || 'http://localhost:5001';
+const DOCKER_PAAS_SOLVER = process.env.PDDL_DOCKER_SOLVER || 'lama-first';
+const DOCKER_PAAS_REQUEST_TIMEOUT_MS = Number(process.env.PDDL_DOCKER_REQUEST_TIMEOUT_MS || 30000);
+const DOCKER_PAAS_POLL_INTERVAL_MS = Number(process.env.PDDL_DOCKER_POLL_INTERVAL_MS || 500);
+const DOCKER_PAAS_MAX_POLL_ATTEMPTS = Number(process.env.PDDL_DOCKER_MAX_POLL_ATTEMPTS || 60);
+
 export async function solveOnline(domain, problem) {
+  if (USE_DOCKER_PAAS) {
+    console.log('[PDDL] Using Docker PaaS (PDDL_USE_DOCKER=true)');
+    return solveRemote(domain, problem);
+  }
+
   try {
     await access(LOCAL_FAST_DOWNWARD_DRIVER, fsConstants.X_OK);
     const localPlan = await solveLocal(domain, problem);
@@ -36,6 +48,10 @@ export async function solveOnline(domain, problem) {
 }
 
 async function solveRemote(domain, problem) {
+  if (USE_DOCKER_PAAS) {
+    return solveDockerPaaS(domain, problem);
+  }
+
   console.log('[PDDL] Requesting plan from solver (timeout: ' + DEFAULT_TIMEOUT_S + 's)...');
   const startTime = Date.now();
   
@@ -59,6 +75,81 @@ async function solveRemote(domain, problem) {
   }
 
   return [];
+}
+
+async function solveDockerPaaS(domain, problem) {
+  const plannerUrl = `${DOCKER_PAAS_BASE_URL}/package/${DOCKER_PAAS_SOLVER}/solve`;
+  console.log('[PDDL] Requesting plan from Docker PaaS at', plannerUrl);
+
+  const body = {
+    domain,
+    problem,
+  };
+
+  const initResponse = await fetchWithTimeout(plannerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, DOCKER_PAAS_REQUEST_TIMEOUT_MS);
+
+  if (!initResponse.ok) {
+    throw new Error(`Docker PaaS request failed ${initResponse.status} ${initResponse.statusText}`);
+  }
+
+  const initJson = await initResponse.json();
+  const resultPath = initJson.result;
+  if (!resultPath) {
+    throw new Error('Docker PaaS did not return a result endpoint');
+  }
+
+  const retrieveUrl = `${DOCKER_PAAS_BASE_URL}${resultPath}`;
+  let attempts = 0;
+  while (attempts < DOCKER_PAAS_MAX_POLL_ATTEMPTS) {
+    await delay(DOCKER_PAAS_POLL_INTERVAL_MS);
+    const resultResponse = await fetchWithTimeout(retrieveUrl, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    }, DOCKER_PAAS_REQUEST_TIMEOUT_MS);
+
+    if (!resultResponse.ok) {
+      throw new Error(`Docker PaaS result request failed ${resultResponse.status} ${resultResponse.statusText}`);
+    }
+
+    const resultJson = await resultResponse.json();
+    if (resultJson.status && resultJson.status !== 'PENDING') {
+      if (resultJson.result) {
+        const parsedOutput = extractPlannerOutput(resultJson.result);
+        if (typeof parsedOutput === 'string') {
+          return parsePlan(parsedOutput);
+        }
+        if (Array.isArray(parsedOutput)) {
+          return parsePlan(parsedOutput);
+        }
+      }
+      if (resultJson.status === 'FAILURE' || resultJson.status === 'ERROR') {
+        throw new Error(`Docker PaaS planning failed: ${JSON.stringify(resultJson)}`);
+      }
+    }
+
+    attempts += 1;
+  }
+
+  throw new Error('Docker PaaS timed out waiting for result');
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function solveLocal(domain, problem) {
