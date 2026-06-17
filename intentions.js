@@ -18,9 +18,11 @@ import {
     socket,
     DEBUG,
     TIME_COST_PER_TILE, 
-    TIME_COST_PER_DELIVERY_TILE,
+    MAX_NUMBER_OF_FAILED_ACTION,
     myIntentions
 } from './agent_bdi.js';
+
+
 
 /*******************************************************************************/
 export class Intentions {
@@ -211,7 +213,7 @@ export class Intentions {
                 const dist = heuristic({ x: e_x, y: e_y }, playerPos);
                 return (dist > this.#beliefs.getVisionRange()) && !this.isSpawnPointVisited(e);
             });
-            console.log('outsideExplores: ', outsideExplores);
+            if (DEBUG) console.log('outsideExplores: ', outsideExplores);
 
             if (outsideExplores.length === 0) {
                 console.log('[FILTER] All explore possibility was tried');
@@ -234,7 +236,7 @@ export class Intentions {
                     return distA - distB; // Tri par distance croissante
                 });
 
-                console.log('sortedExplores:', sortedExplores);
+                if (DEBUG) console.log('sortedExplores:', sortedExplores);
 
                 // Ajouter toutes les intentions explore triées à returnIntention
                 returnIntention.push(...sortedExplores);
@@ -318,7 +320,6 @@ export class Intentions {
         } // ERrror
         else 
         {
-            console.log('ERROR in getIntentionDistance: playerPosition = ojectivePosition');
             return -0.1;
         }
     }
@@ -385,7 +386,6 @@ export class Intentions {
         if (this.getFilteredIntentions().length) {
             if (DEBUG) console.log('      [EXECUTENEXTECTION]: Filtered intention', this.getFilteredIntentions()) }
         const action = this.getPlan()[0];
-        console.log('actionnnnn', action);
         if (!action) return;
 
         // ── MOVE ──────────────────────────────────────────────────
@@ -495,10 +495,11 @@ export class Intentions {
      */
     recordFailedAction(action) {
         this.#failedActionsQueue.push(action);
-        console.log('[FAILED ACTION] Recorded: ', this.#failedActionsQueue);
+        console.log('[FAILED ACTION] Recorded: ', this.#failedActionsQueue, 'but nbrFailedAction:', MAX_NUMBER_OF_FAILED_ACTION);
         // Si 3 échecs identiques consécutifs, retourne vrai puis clear l'array
-        if (this.#failedActionsQueue.length >= 2) {
-            const lastThree = this.#failedActionsQueue.slice(-2);
+        if (this.#failedActionsQueue.length >= MAX_NUMBER_OF_FAILED_ACTION) {
+            console.log('HELLLOOOOO');
+            const lastThree = this.#failedActionsQueue.slice(-MAX_NUMBER_OF_FAILED_ACTION);
             if (lastThree.every(a => a === action)) {
                 this.#failedActionsQueue = []; // Clear l'array
                 return true; // Déclenche replanification
@@ -875,7 +876,7 @@ export class Intentions {
         if (!this.#currentObjective) return false;
 
         // Check if intention is marked as impossible
-        if (this.#currentImpossibleIntentions.has(this.#currentObjective)) {
+        if (this.#currentImpossibleIntentions.has(this.#currentObjective)) {         
             return true;
         }
 
@@ -891,7 +892,9 @@ export class Intentions {
                 .some(p => !p.carriedBy && p.x === x && p.y === y);
             const notCarried = this.#beliefs.getCarriedParcels().length === 0;
             const dist = this.#getIntentionDistance(this.#currentObjective, this.#beliefs.getMyPosition());
-            if (dist === -0.1) console.log('ERROR in Impossible: due to getIntentionDistance, getMyPosition give ', this.#beliefs.getMyPosition())
+            if (dist === -0.1) console.log('ERROR in Impossible: due to getIntentionDistance, getMyPosition = playerPosotion  (', 
+                    this.#beliefs.getMyPosition(),')');
+    
             const IsInVisionRange = (dist+1) <= this.#beliefs.getVisionRange();
             return parcelGone && notCarried && IsInVisionRange;
         }

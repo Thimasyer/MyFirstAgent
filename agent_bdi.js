@@ -43,6 +43,8 @@ const TOKEN = process.env.TOKEN;
 const HOST = process.env.HOST;
 const TIME_COST_PER_TILE = process.env.TIME_COST_PER_TILE;
 const TIME_COST_PER_DELIVERY_TILE = process.env.TIME_COST_PER_DELIVERY_TILE;
+const MAX_NUMBER_OF_FAILED_ACTION = process.env.MAX_NUMBER_OF_FAILED_ACTION;
+
 const HEARTBEAT_DELAY_MS = 500;
 const DEBUG = false;
 
@@ -281,10 +283,10 @@ async function core_loop()
         myDesires.genOption();
         myIntentions.desiresToIntention();
         myIntentions.filterAndSortIntention();
-        if (DEBUG) console.log('[IfBlock1] Filtered intentions:', myIntentions.getFilteredIntentions());
+        if (1) console.log('[IfBlock1] Filtered intentions:', myIntentions.getFilteredIntentions());
         myIntentions.setPlan();
         if (DEBUG) console.log('[IfBlock1] Generated plan:', myIntentions.getPlan());
-        if (DEBUG) console.log('[IfBlock1] ImpossibleIntentions: ', myIntentions.getCurrentImpossibleIntentions());
+        if (1) console.log('[IfBlock1] ImpossibleIntentions: ', myIntentions.getCurrentImpossibleIntentions());
     } 
     else {
 
@@ -292,8 +294,9 @@ async function core_loop()
         const currentIntentionBlocked = myIntentions.getCurrentImpossibleIntentions().has(myIntentions.getCurrentIntention());
         if (currentIntentionBlocked) {
             console.log('[ElseBlock1] ERROR: All intentions blocked, cleaning plan...')
-            myIntentions.clearPlan();
             myIntentions.clearCurrentImpossibleIntentions();
+            myIntentions.clearFailedActionsQueue();
+            myIntentions.clearPlan();
         }
     }
     
@@ -359,7 +362,7 @@ async function core_loop()
     else {
         // log for debuging 
         if (myIntentions.getPlan().length === 0) {
-            if (DEBUG) console.log('[EsleBlock2]: Plan is empty');
+            if (1) console.log('[EsleBlock2]: Plan is empty');
         }
         else if (myIntentions.succeeded()) {
             if (DEBUG) console.log('[ElseBlock2] Current intention \'' 
@@ -372,9 +375,8 @@ async function core_loop()
             }
         }
         else if (myIntentions.impossible()) {
-            if (DEBUG) console.log('[ElseBlock2]: Current intention \'' 
+            if (1) console.log('[ElseBlock2]: Current intention \'' 
                 + myIntentions.getCurrentIntention() + '\' is impossible');
-                myIntentions.clearPlan();
                 // if blocked because plan impossible, clear the list of impossible intentions to allow new plan generation
                 myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentIntention());
                 
@@ -386,6 +388,7 @@ export {
     DEBUG, 
     TIME_COST_PER_TILE,
     TIME_COST_PER_DELIVERY_TILE,
+    MAX_NUMBER_OF_FAILED_ACTION,
     myBeliefs, 
     myIntentions, 
     socket, 
