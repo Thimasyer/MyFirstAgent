@@ -1,6 +1,4 @@
-import { myIntentions } from "./agent_bdi.js";
-
-/*******************************************************************************
+/**
  * @file        pathfinding.js
  * @author      Thomas Eyer
  * @date        2026-06-02
@@ -139,7 +137,6 @@ export function generatePathTo(start, goal) {
 
     // No path found
     console.log(`[PATHFINDING] No valid path found towards (${goalPos.x},${goalPos.y})`);
-    myIntentions.setCurrentImpossibleIntentions(myIntentions.getCurrentIntention());
     return [];
 }
 
