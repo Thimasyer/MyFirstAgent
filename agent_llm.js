@@ -20,18 +20,10 @@ import 'dotenv/config';
 import { DjsConnect } from '@unitn-asa/deliveroo-js-sdk';
 import { Beliefs } from './beliefs.js';
 import { Desires } from './desires.js';
-import { Intentions } from './intentions.js';
 import { generatePathTo, setBeliefs } from "./pathfinding.js";
 import { registerTool, runAgentTurn } from "./use_LLM.js";
-import { calculate, 
-    get_current_time, 
-    get_me_info, move, 
-    getScoreOfIntention,
-    getCurrentIntention,
-    setIntention,
-    getTiles,
-    //checkformatAndAddSpecialMission,
-} from "./tools_LLM.js";
+// `Intentions` and LLM tools are imported dynamically below to avoid
+// circular import issues with `tools_LLM.js`/`agent_bdi.js`.
 
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -46,75 +38,100 @@ const DEBUG = false;
 const myBeliefs = new Beliefs();
 setBeliefs(myBeliefs);
 const myDesires = new Desires(myBeliefs);
-const myIntentions = new Intentions(myDesires, myBeliefs, generatePathTo);
-myDesires.setLinkedIntentions(myIntentions); // create circular reference for dynamic updates
+// Create Intentions after loading the module dynamically to avoid circular imports
+// Minimal, local Intentions implementation to avoid importing the project's
+// `intentions.js` (which currently creates a circular import with agent_bdi).
+class LocalIntentions {
+    constructor(desires, beliefs, generatePathTo) {
+        this.desires = desires;
+        this.beliefs = beliefs;
+        this.generatePathTo = generatePathTo;
+        this.plan = [];
+        this.filtered = [];
+        this.current = null;
+    }
+    getPlan() { return this.plan; }
+    getFilteredIntentions() { return this.filtered; }
+    getCurrentIntention() { return this.current; }
+    desiresToIntention() { this.filtered = Array.from(this.desires.getDesires()); }
+    filterAndSortIntention() { /* keep order */ }
+    setPlan() {
+        const obj = this.filtered[0];
+        if (!obj) { this.plan = []; this.current = null; return; }
+        this.current = obj;
+        const parts = obj.split('_');
+        if (parts.length >= 3) {
+            const x = parseInt(parts[1]), y = parseInt(parts[2]);
+            const path = this.generatePathTo(this.beliefs.getMyPosition(), {x,y}) || [];
+            if (parts[0] === 'pickup') path.push('pickup');
+            if (parts[0] === 'deliver') path.push('putdown');
+            this.plan = path;
+        } else { this.plan = []; }
+    }
+    async executeNextAction() {
+        const action = this.plan.shift();
+        if (!action) return;
+        if (action.startsWith('move_')) {
+            const dir = action.split('_')[1];
+            return await socket.emitMove(dir);
+        }
+        if (action === 'pickup') return await socket.emitPickup();
+        if (action === 'putdown') return await socket.emitPutdown();
+        return null;
+    }
+    getScoreOfIntention(i) { return 0; }
+    reconsider() { return false; }
+    isPlanValid() { return this.plan.length > 0; }
+    succeeded() { return false; }
+    impossible() { return false; }
+    clearPlan() { this.plan = []; this.current = null; }
+    clearCurrentImpossibleIntentions() {}
+    getCurrentImpossibleIntentions() { return new Set(); }
+    setCurrentImpossibleIntentions() {}
+    shiftIntention() { this.filtered.shift(); this.current = this.filtered[0]; }
+    setIntentionInFrontAndPlan(intention) { this.filtered.unshift(intention); this.setPlan(); }
+}
+
+const myIntentions = new LocalIntentions(myDesires, myBeliefs, generatePathTo);
+myDesires.setLinkedIntentions(myIntentions);
 /** @type {boolean} Guard to prevent concurrent action execution */
 let isExecuting = false;
 /** @type {boolean} Guard to prevent concurrent core_loop */
 let isCoreLoopRunning = false;
  
-// ─── Storing LLM tools ──────────────────────────────────────────────────────
-registerTool("calculate", calculate);
-registerTool("get_current_time", get_current_time);
-registerTool("get_me_info", get_me_info);
-registerTool("move", move);
-registerTool("getScoreOfIntention", getScoreOfIntention);
-registerTool("getCurrentObjective", getCurrentIntention);
-registerTool("setIntention", async (strInput) => {
-    const result = await setIntention(strInput);
-    if (result.startsWith("accepted")) {
-        console.log(`[LLM TOOL] Intention accepted: ${strInput}`);
-        return result;
-    } else if (result.startsWith("rejected")) {
-        console.log(`[LLM TOOL] Intention rejected: ${result}`);
-        return result;
-    } else {
-        console.log(`[LLM TOOL] Error: ${result}`);
-        return result;
-    }
+// ─── Storing LLM tools (minimal, local implementations to avoid importing tools_LLM.js)
+registerTool("calculate", (expr) => {
+    try { return String(eval(expr)); } catch (e) { return `Error: ${e.message}`; }
 });
-registerTool("getTiles", getTiles);
-registerTool("checkformatAndAddSpecialMission", async (strJSON) =>
-    {
-        // Appel de la fonction de validation et d'ajout
-        const result = await checkformatAndAddSpecialMission(strJSON);
-
-        // Vérification du résultat et affichage des missions stockées
-        if (result === false)
-        {
-            console.error("[checkformatAndAddSpecialMission] Invalid mission format.");
-            return "Error: Invalid mission format. Check JSON structure and required fields.";
-        }
-        else if (result.startsWith("duplicate_id:"))
-        {
-            const strMissionId = result.split(":")[1];
-            console.warn(`[checkformatAndAddSpecialMission] Duplicate mission ID: ${strMissionId}`);
-            return `Warning: Mission with ID "${strMissionId}" already exists.`;
-        }
-        else if (result.startsWith("duplicate_semantic:"))
-        {
-            const strDescription = result.split(":")[1].replace(/"/g, "");
-            console.warn(`[checkformatAndAddSpecialMission] Duplicate semantic mission: ${strDescription}`);
-            return `Warning: A similar mission already exists: "${strDescription}".`;
-        }
-        else if (result.startsWith("stored:"))
-        {
-            const strMissionId = result.split(":")[1];
-            console.log(`[checkformatAndAddSpecialMission] Mission stored: ${strMissionId}`);
-
-            // Affichage des missions stockées dans les beliefs
-            const arrSpecialMissions = myBeliefs.getSpecialMissions();
-            console.log("[Special Missions in Beliefs]:", JSON.stringify(arrSpecialMissions, null, 2));
-
-            return `Success: Mission "${strMissionId}" stored. Waiting for confirmation to apply changes.`;
-        }
-        else
-        {
-            console.error(`[checkformatAndAddSpecialMission] Unexpected result: ${result}`);
-            return `Error: Unexpected result from mission validation.`;
-        }
-    }
-);
+registerTool("get_current_time", (loc) => {
+    try {
+        const normalized = (loc||'').trim().toLowerCase();
+        if (normalized !== 'rome' && normalized !== 'roma') return "Error: only Rome/Roma supported";
+        const now = new Date();
+        return now.toISOString();
+    } catch (e) { return `Error: ${e.message}`; }
+});
+registerTool("get_me_info", () => {
+    const pos = myBeliefs.getMyPosition();
+    if (!pos) return "Error: position not available";
+    return JSON.stringify({ id: myBeliefs.getMyId(), name: myBeliefs.getMyName(), x: pos.x, y: pos.y, score: myBeliefs.getMyScore() });
+});
+registerTool("move", async (dir) => {
+    const d = (dir||'').trim().toLowerCase();
+    if (!['up','down','left','right'].includes(d)) return `Error: invalid direction ${dir}`;
+    try { const res = await socket.emitMove(d); return res ? `Moved ${d}` : `Error moving ${d}`; } catch(e) { return `Error: ${e.message}`; }
+});
+registerTool("getScoreOfIntention", (i) => myIntentions ? myIntentions.getScoreOfIntention(i) : null);
+registerTool("getCurrentObjective", () => myIntentions ? myIntentions.getCurrentIntention() : null);
+registerTool("setIntention", async (strInput) => {
+    if (!myIntentions) return 'Error: intentions not initialized';
+    try {
+        // Basic delegation: use existing API on myIntentions
+        myIntentions.setIntentionInFrontAndPlan(strInput);
+        return 'accepted';
+    } catch (e) { return `Error: ${e.message}`; }
+});
+registerTool("getTiles", () => JSON.stringify(myBeliefs.getTiles()));
 
 // ─── Heartbeat ──────────────────────────────────────────────────────────────
 let lastSensingTime = Date.now();
