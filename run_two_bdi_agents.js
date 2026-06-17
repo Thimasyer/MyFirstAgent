@@ -3,12 +3,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
+/**
+ * Script to run two BDI agents simultaneously
+ * This is useful for testing multi-agent scenarios
+ */
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const agentScript = path.resolve(__dirname, 'agent_bdi.js');
 
+/**
+ * Parse command line arguments
+ * Supports both environment variables and command line flags
+ */
 function parseArgs(argv) {
   const args = {
     token1: process.env.TOKEN1 || '',
@@ -18,6 +27,7 @@ function parseArgs(argv) {
     nbrFailedAction2: process.env.MAX_NUMBER_OF_FAILED_ACTION_2 || 3,
   };
 
+  // Parse command line arguments
   for (let i = 2; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg.startsWith('--token1=')) {
@@ -38,12 +48,33 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * Print usage instructions
+ */
 function printUsage() {
   console.log('Usage: node run_two_bdi_agents.js --token1=<token1> --token2=<token2> [--host=<host>]');
+  console.log('');
   console.log('You may also set TOKEN1, TOKEN2, and HOST in .env or environment.');
+  console.log('');
+  console.log('Options:');
+  console.log('  --token1=<token>       Token for agent 1');
+  console.log('  --token2=<token>       Token for agent 2');
+  console.log('  --host=<url>            Game server URL (default: http://localhost:8080)');
+  console.log('  --nbrFailedAction1=<n> Max failed actions before giving up for agent 1 (default: 2)');
+  console.log('  --nbrFailedAction2=<n> Max failed actions before giving up for agent 2 (default: 3)');
+  console.log('  --help, -h             Show this help message');
 }
 
+/**
+ * Spawn a single BDI agent as a child process
+ * @param {string} token - Authentication token for the agent
+ * @param {number} index - Agent index (0 or 1)
+ * @param {string} host - Game server URL
+ * @param {string|number} nrbFailedAction - Max failed actions before giving up
+ * @returns {ChildProcess} The spawned child process
+ */
 function spawnAgent(token, index, host, nrbFailedAction) {
+  // Set up environment variables for the agent
   const env = {
     ...process.env,
     HOST: host,
@@ -52,11 +83,13 @@ function spawnAgent(token, index, host, nrbFailedAction) {
     MAX_NUMBER_OF_FAILED_ACTION: nrbFailedAction,
   };
 
+  // Spawn the agent process
   const child = spawn(process.execPath, [agentScript], {
     env,
     stdio: 'inherit',
   });
 
+  // Handle process exit
   child.on('exit', (code, signal) => {
     const label = `agent-${index + 1}`;
     if (signal) {
@@ -66,6 +99,7 @@ function spawnAgent(token, index, host, nrbFailedAction) {
     }
   });
 
+  // Handle process errors
   child.on('error', (error) => {
     console.error(`[agent-${index + 1}] failed to start: ${error.message}`);
   });
@@ -73,12 +107,16 @@ function spawnAgent(token, index, host, nrbFailedAction) {
   return child;
 }
 
+/**
+ * Main function
+ * Validates arguments and spawns both agents
+ */
 function main() {
   // Debug: Check if .env was loaded
   console.log(`[DEBUG] process.env.TOKEN1 exists: ${!!process.env.TOKEN1}`);
   console.log(`[DEBUG] process.env.TOKEN2 exists: ${!!process.env.TOKEN2}`);
-  console.log(`[DEBUG] nbrFailedAction1 exists: ${!!process.env.MAX_NUMBER_OF_FAILED_ACTION_1}`);
-  console.log(`[DEBUG] nbrFailedAction2 exists: ${!!process.env.MAX_NUMBER_OF_FAILED_ACTION_2}`);
+  console.log(`[DEBUG] MAX_NUMBER_OF_FAILED_ACTION_1 exists: ${!!process.env.MAX_NUMBER_OF_FAILED_ACTION_1}`);
+  console.log(`[DEBUG] MAX_NUMBER_OF_FAILED_ACTION_2 exists: ${!!process.env.MAX_NUMBER_OF_FAILED_ACTION_2}`);
   if (process.env.TOKEN1) {
     console.log(`[DEBUG] TOKEN1 first 20 chars: ${process.env.TOKEN1.slice(0, 20)}`);
   }
@@ -87,9 +125,10 @@ function main() {
   }
 
   const args = parseArgs(process.argv);
-  console.log('[DEBUG] Just to check nbrFailedAction1: ', args.nbrFailedAction1);
-  console.log('[DEBUG] Just to check nbrFailedAction2: ', args.nbrFailedAction2);
+  console.log('[DEBUG] Max failed actions agent 1:', args.nbrFailedAction1);
+  console.log('[DEBUG] Max failed actions agent 2:', args.nbrFailedAction2);
 
+  // Validate arguments
   if (args.help || !args.token1 || !args.token2 || !args.nbrFailedAction1 || !args.nbrFailedAction2) {
     printUsage();
     if (!args.help) process.exit(1);
@@ -100,15 +139,18 @@ function main() {
   console.log(`Agent 1 token prefix: ${args.token1.slice(0, 8)}`);
   console.log(`Agent 2 token prefix: ${args.token2.slice(0, 8)}`);
 
+  // Agent configurations
   const agents = [
-  { token: args.token1, nbrFailedAction: args.nbrFailedAction1 },
-  { token: args.token2, nbrFailedAction: args.nbrFailedAction2 },
+    { token: args.token1, nbrFailedAction: args.nbrFailedAction1 },
+    { token: args.token2, nbrFailedAction: args.nbrFailedAction2 },
   ];
 
+  // Spawn both agents
   const children = agents.map(({ token, nbrFailedAction }, index) =>
     spawnAgent(token, index, args.host, nbrFailedAction)
   );
 
+  // Handle Ctrl+C to stop all agents gracefully
   process.on('SIGINT', () => {
     console.log('\nStopping agents...');
     children.forEach((child) => {
